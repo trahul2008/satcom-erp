@@ -13,6 +13,6 @@ compose file. A demo: **no replica, no failover, no backup job.**
   `docker compose cp` into the backend container, then
   `bench --site frontend execute erpnext.satcom_factory_setup.run`.
 - After restarting `backend`, restart `frontend` too (nginx caches the backend's IP -> 502).
-- QR labels: custom `QR Label` field (stock Barcode field, options `qrcode`) on Item, Batch,
+- QR labels: custom `QR Label` field (stock Barcode field, options `qrcode`) on Item, Batch, Serial No, Warehouse, Work Order, Job Card, filled with the record name by Server Scripts. Print format "Satcom QR Label - <doctype>" (100x50 mm) from `satcom_qr_labels.py`; choose Letterhead "No Letterhead" when printing.
   Serial No, Warehouse, Work Order, Job Card, filled with the record name by Server Scripts.
 - Roles are tied to B: if B is down the demo is down. Do not add it to Set-FilesReplica.
