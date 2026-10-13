@@ -1,0 +1,57 @@
+#cloud-config
+# Ubuntu Server 24.04 autoinstall for the ERPNext demo VM (satcom-erp).
+# Delivered on a small FAT disk labelled CIDATA (cloud-init NoCloud) by New-ErpVM.ps1,
+# which replaces __SSH_KEY__ with the maintenance public key before writing it.
+#
+# Network: the NAT switch on B (172.20.90.0/24), same as satcom-files (.10). 192.168.1.91 is
+# reserved on the router for this MAC, for when the VM moves to VM-LAN.
+autoinstall:
+  version: 1
+  interactive-sections: []
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: Asia/Kolkata
+  source:
+    id: ubuntu-server
+  network:
+    version: 2
+    ethernets:
+      lan:
+        match:
+          macaddress: "00:15:5d:01:5c:91"
+        set-name: eth0
+        dhcp4: false
+        dhcp6: false
+        addresses: [172.20.90.11/24]
+        routes:
+          - to: default
+            via: 172.20.90.1
+        nameservers:
+          addresses: [192.168.1.87, 192.168.1.84, 1.1.1.1]
+  storage:
+    # One disk: OS, Docker images and the ERPNext volumes.
+    layout:
+      name: lvm
+      sizing-policy: all
+      match:
+        size: smallest
+  ssh:
+    install-server: true
+    allow-pw: false
+  packages:
+    - linux-cloud-tools-virtual
+    - linux-tools-virtual
+  updates: security
+  user-data:
+    hostname: satcom-erp
+    users:
+      - name: satcom
+        groups: [sudo]
+        shell: /bin/bash
+        lock_passwd: true
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+        ssh_authorized_keys:
+          - "__SSH_KEY__"
+  # Power off when done so the host script can detach the ISO and the seed disk.
+  shutdown: poweroff
