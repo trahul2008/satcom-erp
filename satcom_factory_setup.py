@@ -18,7 +18,7 @@ EXTRA_WAREHOUSES = [
     "Quality Hold",
     "Scrap",
 ]
-ITEM_GROUPS = ["Sub Assemblies", "Packaging", "Tools & Spares", "Consumable"]
+ITEM_GROUPS = ["Finished Goods", "Sub Assemblies", "Packaging", "Tools & Spares", "Consumable"]
 
 
 def _log(msg):
@@ -96,6 +96,7 @@ def _settings():
     _set_single("Stock Settings", {
         "allow_negative_stock": 0,
         "default_warehouse": wh("Stores"),
+        "enable_serial_and_batch_no_for_item": 1,  # serial / batch tracking (QR labels) on items
         "use_serial_batch_fields": 1,       # type serial / batch straight on the row (scan friendly)
         "auto_insert_price_list_rate_if_missing": 1,
     })
