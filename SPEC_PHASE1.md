@@ -28,15 +28,14 @@ The 2026-10-13 demo setup is already applied (`satcom_factory_setup.py`, `satcom
 | `satcom_qr` Barcode field (qrcode) + Server Scripts "Satcom QR label - <doctype>" on Item, Batch, Serial No, Warehouse, Work Order, Job Card | Reused for labels (§6) |
 | Print formats "Satcom QR Label - <doctype>" (100 × 50 mm) | Reused; GRN batch print added (§6) |
 | Stock Settings: negative stock off, serial/batch fields on rows | Keep |
-| **Demo sample data** (control-panel story): suppliers Precision Metals / Bharat Electricals / Sunrise Powder Coaters, customer Demo Industries Ltd, items `RM-*`, `SA-ENCLOSURE-PAINTED`, `SRV-POWDER-COATING`, `FG-MCP-001`, workstations, operations, BOMs, a submitted opening-stock entry, draft POs, a draft work order, project "Panel Line Commissioning" | **Remove before §2.4** (it breaks the item code rules). List it and get Rahul's OK first; back up; cancel submitted entries, then delete in dependency order. Keep the delete as a module (`satcom_demo_cleanup.py`) so it's repeatable. |
+| **Demo sample data** (control-panel story): suppliers Precision Metals / Bharat Electricals / Sunrise Powder Coaters, customer Demo Industries Ltd, items `RM-*`, `SA-ENCLOSURE-PAINTED`, `SRV-POWDER-COATING`, `FG-MCP-001`, workstations, operations, BOMs, a submitted opening-stock entry, draft POs, a draft work order, project "Panel Line Commissioning" with its 4 tasks, subcontracting BOM `SB-0001`, batch `WIRE-DEMO-0001` and its serial-and-batch bundle, the 3 auto-created item prices | **Remove before §2.1** (it breaks the item code rules and blocks switching perpetual inventory off). Approved by Rahul 2026-10-28. Back up; cancel submitted entries, then delete in dependency order; keep the delete as a module (`satcom_demo_cleanup.py`). Leave ERPNext's cancelled ledger rows in place (standard). **Don't reset document counters**: the cancelled ledger rows keep the old voucher numbers, and reusing them would confuse the ledger history. Keep the supplier groups, item groups and the "Assembly" operation, which ERPNext created at setup. |
 
 ## 2. Foundation
 
 ### 2.1 Settings
-- Company: confirm **Enable Perpetual Inventory = off**.
-- Stock Settings: valuation method Moving Average (**OPEN**; confirm before go-live, painful to change later). Auto-create serial and batch bundles on inward transactions on.
+- Company: **switch Enable Perpetual Inventory off** (it is on; ERPNext allows the switch once the demo's opening stock entry is cancelled by the cleanup). Confirm no GL entries remain active afterwards.
+- Stock Settings: keep the valuation method as it is, **FIFO** (**OPEN**; management and accounts confirm before go-live, painful to change later). Inward serials and batches come from each item's series (§2.4); v16 has no separate "auto-create on inward" setting.
 - Buying Settings: supplier naming by supplier name; "PO required" / "Purchase Receipt required" off; **maintain same rate off** (demo set it on; POs must allow the approved quotation's rate).
-- Projects Settings: projects named by **Project Name** (so §2.5 can set the job code as the name). Verify on v16.
 
 ### 2.2 Roles
 Two custom roles (`Satcom Approver`, `Satcom Indenter`); everything else standard.
@@ -66,7 +65,7 @@ Map the decided list onto what exists; add only what's missing. Don't rename exi
 | Repair / RMA | **new** `Repair RMA - STPL` (used from phase 3) |
 | Job-work vendors | `Subcontractor (Job Work) - STPL` (existing; one per vendor later if needed) |
 | Scrapped material | `Scrap - STPL` (existing) |
-| `Raw Material - STPL`, `Goods In Transit - STPL` | Not used by the Satcom flow. After demo cleanup, disable `Raw Material` if empty (ask). Leave Goods In Transit. |
+| `Raw Material - STPL`, `Goods In Transit - STPL` | Not used by the Satcom flow. After the demo cleanup, disable `Raw Material` (it will be empty). Leave Goods In Transit (ERPNext uses it for transfers). |
 
 Rack/bin locations: **OPEN** (D10); don't build.
 
@@ -93,7 +92,7 @@ Every item code = 3-letter category prefix + specs or a running number. Codes ne
 | FGD | Finished Goods (existing group) | Number | FGD-0003 |
 
 - Custom fields on Item Group: `satcom_prefix` (Data), `satcom_code_type` (Select: Specs / Number). Groups without a prefix (ERPNext defaults like Products, Services) are not used for new items.
-- **Specs codes:** one item **template** per specs group, code = prefix (`RES`), with Item Attributes whose values carry abbreviations. RES: Resistance (10K, 4K7, 100R…), Package (0402, 0603, 0805, 1206, THT). CAP: Capacitance (100N, 10U, 22P…), Package, Voltage (16V, 50V…). IND: Inductance, Package. HWR: Size (M3X10…), Material (SS, MS, ZN…). Item Variant Settings must produce `RES-10K-0603`. Seed a few values only; stores adds more.
+- **Specs codes:** one item **template** per specs group, code = prefix (`RES`), with Item Attributes whose values carry abbreviations. RES: Resistance (10K, 4K7, 100R…), Package (0402, 0603, 0805, 1206, THT). CAP: Capacitance (100N, 10U, 22P…), Package, Voltage (16V, 50V…). IND: Inductance, Package. HWR: **Thread Size** (M3X10…; a new attribute, because ERPNext's default "Size" holds clothing sizes XS–XL and stays untouched), Material (SS, MS, ZN…). Attribute names are plain words (Resistance, Package, Voltage, Inductance, Thread Size, Material), like item group names, not "Satcom …". Item Variant Settings must produce `RES-10K-0603`. Seed a few values only; stores adds more.
 - **Number codes:** a Server Script (Item, Before Insert) fills `item_code` = `<PREFIX>-NNNN` with the next free number for that prefix when it's blank or equals the prefix. If the form insists on an item code, relax it (Property Setter) and enforce in the validate script, or have a Client Script put the prefix in. Verify the real UI flow.
 - **Validation** (Server Script, Item, Before Save): code matches `^[A-Z0-9-]{1,20}$` and starts with its group's prefix; duplicate guard on manufacturer part number (block with a message naming the existing code).
 - Custom fields on Item: `satcom_mpn` (Manufacturer Part No), `satcom_manufacturer`, `satcom_drawing_no`, `satcom_drawing_rev`.
@@ -113,12 +112,13 @@ Custom fields on Project:
 - `satcom_certificates_required` (Check): supplier test certificates mandatory for this job's receipts
 - `satcom_qc_notes` (Small Text): customer QC requirements in words
 
-Naming (Server Script, Project, Before Insert, setting `project_name`):
-- Customer Order → `J-YY-NNNN` (`J-26-0042`; YY = calendar year of creation)
-- Stock Build → `S-YY-NNNN` (`S-26-0007`)
-- Extension → `<parent>-NN` (`J-26-0042-01`, `-02` …), sequence per parent
+Naming: v16 Projects are named by a naming series (`PROJ-.####`) and Projects Settings has no other option. A Server Script (Project, Before Insert) sets the series per job type, so ERPNext's own counter does the numbering:
+- Customer Order → series `J-.YY.-.####` → `J-26-0042` (YY = calendar year of creation)
+- Stock Build → series `S-.YY.-.####` → `S-26-0007`
+- Extension → series `<parent>-.##` → `J-26-0042-01`, `-02` … (a counter per parent)
+- `project_name` = the code too, so lists and links show it; the description stays in `satcom_job_title`.
 
-If v16 won't let a Server Script set the name this way, stop and report the options. Don't fall back to free-typed names.
+Prove this works for all three types before building on it. If v16 won't let a Server Script set the series this way, stop and report the options. Don't fall back to free-typed names.
 
 ## 3. Indents (Material Request, type Purchase)
 
@@ -138,7 +138,13 @@ If v16 won't let a Server Script set the name this way, stop and report the opti
 ### 4.2 PO approval
 - **Workflow "Satcom PO Approval":** Draft → Pending Approval (Purchase or Indenter) → Approved (Satcom Approver; submitted) or Rejected (reason required). Every PO needs approval.
 - Job code flows from indent rows (`project`) into PO rows. A PO row without a job code only for TOL items.
-- PO print format: company letterhead (address, CIN, GSTIN as on the warranty certificate footer); job code on each row.
+- PO print format with a new letterhead **"Satcom Technologies"** (make it the default; the two generic ERPNext letterheads stay but aren't used). Details, from the warranty certificate footer:
+  - Logo: `erpnext/assets/satcom-logo.png` (cropped from a scan; replace with the original logo file when Rahul has it).
+  - Registered office: 403, Bhanu Enclave, 7-1-638/1, Sunder Nagar, Erragadda, Hyderabad - 500 038. Ph: +91-40-2371 0333, Fax: +91-40-2371 3444, info@satcomindia.in, www.satcomindia.in
+  - Factory: Plot No 12, EMC-TGIIC, Maheshwaram, Rangareddy District, Telangana 501 359
+  - CIN: U32204TG1999PTC033193 · GSTIN: 36AAECS9513M1ZW
+  - Also create the two Address records (Registered office = billing, Factory = shipping) and set GSTIN/CIN on the Company. POs show the factory as the delivery address.
+- Job code on each PO row.
 
 ## 5. Goods receipt (GRN) and incoming QC
 
@@ -153,6 +159,7 @@ If v16 won't let a Server Script set the name this way, stop and report the opti
   - Accepted → `Stores - STPL`. Rejected → `Rejected - STPL`.
 - Inspection level comes from the job (`satcom_incoming_inspection`): show it on the inspection; 100% sets sample size = full qty. No job, or a stock build: Standard checks (the item's default template, written by QC).
 - Only Quality Manager submits Quality Inspections.
+- Stock Settings "Action if Quality Inspection is rejected" is **Stop**, which would block a QC Release that sends rejected rows to `Rejected - STPL`. Set it to **Warn**, and enforce the real rule in a Server Script on Stock Entry (Before Submit): a row whose inspection is **Rejected** may only go to `Rejected - STPL`, and a row going to `Stores - STPL` must have an **Accepted** inspection. On Purchase Receipts nothing is inspected (all of it lands in Quality Hold), so Warn changes nothing there.
 - A "Pending QC" view: everything in Quality Hold, oldest first, with GRN no, supplier, job and days waiting.
 
 ### 5.3 Failed material (QC confirms, then stores decides)
@@ -191,7 +198,7 @@ Workspace **"Satcom Purchase & Stores"**: shortcuts to new Indent, PO, GRN, QC R
 - Installer modules in `erpnext/`, one per area, each idempotent with a `run()`: e.g. `satcom_p1_foundation.py`, `satcom_p1_purchase.py`, `satcom_p1_receipt_qc.py`, `satcom_p1_labels.py`, `satcom_p1_reports.py`, plus `satcom_demo_cleanup.py` and `satcom_p1_check.py`.
 - Server Script and Client Script **source lives in repo files** (e.g. `erpnext/server_scripts/<name>.py`, `erpnext/client_scripts/<name>.js`); the installer creates or updates the record from the file. Never edit them only in the UI: if a quick UI fix is made, copy it back to the file in the same session.
 - Server Scripts run in Frappe's restricted sandbox (no imports, limited API). If a rule can't be done there, stop and explain. Don't work around it by putting files into the erpnext app.
-- Custom fields `satcom_*`; custom roles `Satcom *`; custom DocTypes/records prefixed "Satcom".
+- Custom fields `satcom_*`; custom roles `Satcom *`; custom DocTypes, scripts, workflows, reports and print formats prefixed "Satcom". Master data that users see as ordinary words (item groups, item attributes, warehouses) keeps plain names.
 - Rerunning any installer must change nothing the second time.
 
 ## 10. Acceptance check
@@ -216,7 +223,8 @@ Workspace **"Satcom Purchase & Stores"**: shortcuts to new Indent, PO, GRN, QC R
 | Threshold basis (before/after GST) | Net total before tax | Vijay / Dileep |
 | Concessions need approver sign-off | Off (stores decides) | Vijay / Dileep |
 | Tools bought/issued without a job code | Allowed (assumed) | Vijay / Dileep |
-| Stock valuation method | Moving Average | Management + accounts, before go-live |
+| Stock valuation method | FIFO (as set today) | Management + accounts, before go-live |
+| Original logo file for the letterhead | Scan crop in `erpnext/assets/` | Rahul |
 | Label printer and size | 100 × 50 mm (existing) | Rahul |
 | Rack/bin locations (D10) | Not built | Stores |
 | Indent self-approval below a value | None | Management, once staff join |

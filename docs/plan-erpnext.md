@@ -7,9 +7,9 @@ PLANNING.md item 9 points here (same pattern as `docs/plan-nextcloud.md`). Keep 
 **Where:** the 2026-10-13 demo VM `satcom-erp` on Server B (Docker, site `frontend`) becomes the real system. Build method: configuration as code (installer modules + Server/Client Scripts in `erpnext/`), no custom app. Rules: `erpnext/CLAUDE.md`.
 
 ## Phase 0 — groundwork (before phase 1)
-- [ ] Access check from the dev PC: `ssh satcom-erp-nat`, `docker compose ps`, `bench version`, site `frontend`, `server_script_enabled` on.
-- [ ] Pre-change backup routine works: `bench backup --with-files`, files copied off the VM.
-- [ ] Inventory of what's on the site; Rahul approves removing the 2026-10-13 sample data (`satcom_demo_cleanup.py`).
+- [x] Access check from the dev PC (2026-10-28): 9 containers up, ERPNext 16.50.0 / Frappe 16.51.0, site `frontend`, `server_script_enabled` = 1.
+- [x] Pre-change backup routine works (2026-10-28): `D:\ERPNext-Backups\20261028_130708-phase0\` with SHA256SUMS (holds the site config with the DB password: keep private).
+- [x] Inventory of what's on the site (2026-10-28); Rahul approved removing the 2026-10-13 sample data. Findings folded into the spec: perpetual inventory was on, valuation is FIFO, Projects can only be named by series, "Size" attribute already exists, QI-rejected action was Stop, no company address/GSTIN/CIN or letterhead.
 - [x] `PLANNING.md` item 9 → this file (2026-10-28).
 
 ## Phase 1 — purchase, stores, QR labels, incoming QC
@@ -46,7 +46,7 @@ Server work under the root `CLAUDE.md`; reuse the Nextcloud patterns (`docs/plan
 - [ ] **Network:** move to `VM-LAN` at 192.168.1.91 (MAC reserved) when Ethernet 4 is cabled, or keep VM-NAT + port proxy.
 - [ ] **Publishing:** HTTPS name (e.g. `erp.satcomindia.in`, to be decided) through nginx on both servers, office DNS zone, Let's Encrypt via `Update-SatcomCertificate.ps1`; retire plain HTTP on 8081.
 - [ ] **Sign-in:** Google Workspace (Frappe social login) for office staff, local accounts with 2FA for the rest; real users and roles.
-- [ ] **Email:** Workspace SMTP relay, as for the workforce app and Nextcloud.
+- [ ] **Email:** Workspace SMTP relay, as for the workforce app and Nextcloud. Before turning it on, review the standard Notifications that are enabled (e.g. "Material Request Receipt Notification") so nothing unexpected starts mailing people.
 - [ ] **Data:** item master built with the code scheme, suppliers, customers, opening stock from a physical count (D4).
 - [ ] **UPS with clean shutdown** (already open for Nextcloud) protects the ERP database too.
 
