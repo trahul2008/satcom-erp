@@ -1,18 +1,37 @@
-# ERPNext demo (satcom-erp) - 2026-10-13
+# ERPNext (satcom-erp)
 
 Vanilla ERPNext v16 (frappe/erpnext image, MariaDB 11.8, Redis) via the official frappe_docker
-compose file. A demo: **no replica, no failover, no backup job.**
+compose file. Built 2026-10-13 as a demo; becoming the real factory system (phase 1 in progress,
+`SPEC_PHASE1.md`, status in `docs/plan-erpnext.md`, rules in `CLAUDE.md`).
+**No replica, no failover, no backup job yet.**
 
 - VM `satcom-erp` on Server B (Hyper-V): 6 vCPU, 12 GB, 200 GB dynamic disk, 172.20.90.11 on VM-NAT.
   Built by `scripts/New-ErpVM.ps1` (autoinstall in `autoinstall/`), then `provision.sh`.
 - Reach it: `http://192.168.1.86:8081` from the office LAN (netsh portproxy + firewall rule
-  "ERPNext demo (LAN)" on B, LAN-only). Plain HTTP - demo credentials only.
+  "ERPNext demo (LAN)" on B, LAN-only). Plain HTTP.
 - SSH: alias `satcom-erp-nat` (via B). Files in `/opt/erpnext`; passwords in `/opt/erpnext/.env`
   (root-only): `sudo grep ADMIN_PASSWORD /opt/erpnext/.env`. Login user `Administrator`.
-- Factory setup: `satcom_factory_setup.py` (idempotent), run with
-  `docker compose cp` into the backend container, then
-  `bench --site frontend execute erpnext.satcom_factory_setup.run`.
 - After restarting `backend`, restart `frontend` too (nginx caches the backend's IP -> 502).
-- QR labels: custom `QR Label` field (stock Barcode field, options `qrcode`) on Item, Batch, Serial No, Warehouse, Work Order, Job Card, filled with the record name by Server Scripts. Print format "Satcom QR Label - <doctype>" (100x50 mm) from `satcom_qr_labels.py`; choose Letterhead "No Letterhead" when printing.
-  Serial No, Warehouse, Work Order, Job Card, filled with the record name by Server Scripts.
-- Roles are tied to B: if B is down the demo is down. Do not add it to Set-FilesReplica.
+- Roles are tied to B: if B is down ERPNext is down. Do not add it to Set-FilesReplica.
+
+## Backup before every change run
+`bench --site frontend backup --with-files` in the backend container; the four files land in
+`sites/frontend/private/backups/<ts>-frontend-*`. Copy them off the VM (`docker compose cp` to a
+temp dir, then `tar` over ssh) to `D:\ERPNext-Backups\<ts>-<label>\` on Rahul's PC with a
+`SHA256SUMS`. The site-config file holds the DB password: never into the repo.
+
+## Running an installer module
+```
+scp erpnext/<module>.py satcom-erp-nat:/tmp/
+ssh satcom-erp-nat "cd /opt/erpnext && sudo docker compose cp /tmp/<module>.py backend:/home/frappe/frappe-bench/apps/erpnext/erpnext/ && sudo docker compose exec -T backend bench --site frontend execute erpnext.<module>.run"
+```
+Every module is idempotent: a second run reports `0 changes`.
+
+| Module | What | Status |
+|---|---|---|
+| `satcom_factory_setup.py` | Company, warehouses, item groups, settings, `satcom_qr` fields + scripts | applied 10-13 |
+| `satcom_qr_labels.py` | "Satcom QR Label - <doctype>" 100x50 mm print formats (print with "No Letterhead") | applied 10-13 |
+| `satcom_sample_data.py` | Demo sample data | **retired**, removed 10-28 |
+| `satcom_demo_cleanup.py` | Removes the sample data; `run` with `--kwargs "{'dry_run': 1}"` first (rolls back), `report` is read-only | applied 10-28 |
+| `satcom_p1_foundation.py` | Spec §2: 2.1 settings | in progress |
+| `satcom_p1_check.py` | `verify` prints PASS/FAIL for what's built so far (read-only) | in progress |

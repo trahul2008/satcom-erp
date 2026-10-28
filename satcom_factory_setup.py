@@ -108,7 +108,7 @@ def _settings():
     })
     _set_single("Buying Settings", {
         "backflush_raw_materials_of_subcontract_based_on": "BOM",
-        "maintain_same_rate": 1,
+        "maintain_same_rate": 0,  # phase 1 (SPEC_PHASE1 2.1): POs take the quotation's rate
     })
 
 

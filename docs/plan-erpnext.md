@@ -14,7 +14,15 @@ PLANNING.md item 9 points here (same pattern as `docs/plan-nextcloud.md`). Keep 
 
 ## Phase 1 — purchase, stores, QR labels, incoming QC
 Spec: `erpnext/SPEC_PHASE1.md`. Roles, warehouses, item code scheme, job codes (`J-26-0042`, `-01` extensions, `S-26-0007` stock builds), indents and POs with Vijay/Dileep approval, the Rs. 3 lakh quotation rule, GRN into Quality Hold, QR labels per piece / per lot, QC release, failed-material disposition, issues only against job codes, four reports.
+- [x] §1 demo cleanup (2026-10-28): `satcom_demo_cleanup.py`, 41 changes, rerun 0. Backups `D:\ERPNext-Backups\20261028_134403-pre-cleanup\` and `…135119-post-cleanup\`. Afterwards 0 GL / 0 stock ledger rows, Stock Balance empty.
+- [x] §2.1 settings (2026-10-28): `satcom_p1_foundation.py` switched perpetual inventory off and maintain-same-rate off (rerun 0 changes); valuation stays FIFO; `satcom_p1_check.verify` 11/11 PASS. Backup `…135203-pre-2.1\`.
+- [ ] §2.2 roles onward.
 - [ ] Built section by section; acceptance check (spec §10) passes.
+
+Technical decisions (made within the spec, demo data only; Rahul delegated these 2026-10-28):
+- 2026-10-28, cleanup: cancelling `MAT-STE-2026-00001` also queued 6 Repost Item Valuation entries (one per item and warehouse, because `item_based_reposting` is on). They have no voucher fields, so they were matched as "created by this cancel, for the demo items" and deleted with the voucher's 12 SLE, 4 GL, 1 bundle and 1 bundle row.
+- 2026-10-28, cleanup: `frappe.delete_doc` steps a naming series back when it deletes the last-numbered record, which reset 5 counters (MAT-STE, MFG-WO, PROJ, PUR-ORD, TASK) to 0. Put back by hand to the phase 0 values, and the module now keeps every counter itself.
+- 2026-10-28: `satcom_factory_setup.py` now sets maintain-same-rate **off**, so rerunning it can't undo §2.1. `satcom_sample_data.py` is marked retired. `satcom_qr_labels.render_check` still names demo records; it will be updated in §6.
 - [ ] Open items still to be decided are listed in spec §11.
 
 ## Phase 2 — production, testing and FAT
