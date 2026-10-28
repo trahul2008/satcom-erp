@@ -1,4 +1,7 @@
-"""Sample factory data for the ERPNext demo (satcom-erp). Idempotent: each record is created
+"""RETIRED 2026-10-28: removed by satcom_demo_cleanup.py; don't run it again (its codes break
+the phase 1 item code rules). Kept for the record.
+
+Sample factory data for the ERPNext demo (satcom-erp). Idempotent: each record is created
 only if missing, so a rerun adds nothing twice. Run (after satcom_factory_setup.run):
     bench --site frontend execute erpnext.satcom_sample_data.run
 
