@@ -31,7 +31,7 @@ You're configuring ERPNext v16 for Satcom's factory. Business decisions are made
   1. run its installer twice (the second run must report no changes);
   2. run the phase check (`satcom_p<n>_check.verify`);
   3. tell Rahul in plain words what changed and where to see it in ERPNext;
-  4. commit (clear message, e.g. `erpnext: indent approval workflow`); don't push unless asked;
+  4. commit (clear message, e.g. `erpnext: indent approval workflow`), then `git pull --rebase` and push to the working branch `claude/erpnext-phase1-plan` (`git push origin HEAD:claude/erpnext-phase1-plan`). **Never push to main**; merging stays with Rahul;
   5. update `erpnext/README.md` (how to run things) and `docs/plan-erpnext.md` (status, dated);
   6. wait for his OK before the next section.
 - Keep `erpnext/README.md` short and current. Put the history and decisions in `docs/plan-erpnext.md`.
