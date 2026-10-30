@@ -33,5 +33,5 @@ Every module is idempotent: a second run reports `0 changes`.
 | `satcom_qr_labels.py` | "Satcom QR Label - <doctype>" 100x50 mm print formats (print with "No Letterhead") | applied 10-13 |
 | `satcom_sample_data.py` | Demo sample data | **retired**, removed 10-28 |
 | `satcom_demo_cleanup.py` | Removes the sample data; `run` with `--kwargs "{'dry_run': 1}"` first (rolls back), `report` is read-only | applied 10-28 |
-| `satcom_p1_foundation.py` | Spec §2: 2.1 settings, 2.2 roles (Role Profiles "Satcom Approver/Indenter/Purchase/Stores/QC") and `demo.*@example.com` users (no password: set one in User to sign in as them) | in progress |
+| `satcom_p1_foundation.py` | Spec §2: 2.1 settings, 2.3 warehouses (Rejected, Repair RMA; Raw Material disabled), 2.2 roles (Role Profiles "Satcom Approver/Indenter/Purchase/Stores/QC") and `demo.*@example.com` users (no password: set one in User to sign in as them) | in progress |
 | `satcom_p1_check.py` | `verify` prints PASS/FAIL for what's built so far (read-only; needs `satcom_p1_foundation.py` copied into the container too) | in progress |

@@ -3,7 +3,7 @@
     bench --site frontend execute erpnext.satcom_p1_check.verify
 Prints PASS/FAIL per line and a summary. It grows with each section as it is built; the DEMO
 scenario (create_demo / cleanup, spec section 10) is added once the sections it needs exist.
-Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles.
+Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses.
 """
 import frappe
 
@@ -62,10 +62,22 @@ def _section_2_2_roles():
     _check("2.2 at least two demo approvers", len(approvers) >= 2, approvers)
 
 
+def _section_2_3_warehouses():
+    active = {"Stores", "Quality Hold", "Rejected", "Work In Progress", "Finished Goods", "Repair RMA",
+              "Subcontractor (Job Work)", "Scrap", "Goods In Transit"}
+    for name in sorted(active):
+        w = frappe.db.get_value("Warehouse", f"{name} - STPL", ["disabled", "is_group", "company"], as_dict=True)
+        _check(f"2.3 {name} - STPL active", w and not w.disabled and not w.is_group and w.company == COMPANY, w)
+    _check("2.3 Rejected - STPL flagged as rejected warehouse",
+           frappe.db.get_value("Warehouse", "Rejected - STPL", "is_rejected_warehouse"))
+    _check("2.3 Raw Material - STPL disabled", frappe.db.get_value("Warehouse", "Raw Material - STPL", "disabled"))
+
+
 def verify():
     _results.clear()
     _section_1_cleanup()
     _section_2_1_settings()
     _section_2_2_roles()
+    _section_2_3_warehouses()
     failed = _results.count(False)
     print(f"{len(_results) - failed}/{len(_results)} PASS" + (f", {failed} FAIL" if failed else ""))

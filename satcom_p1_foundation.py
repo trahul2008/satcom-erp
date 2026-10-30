@@ -3,7 +3,7 @@
 Run (after satcom_demo_cleanup.run):
     bench --site frontend execute erpnext.satcom_p1_foundation.run
 Each step compares before it writes and prints only what it changed, so a second run reports
-"0 changes". Built so far: 2.1 settings, 2.2 roles and demo users.
+"0 changes". Built so far: 2.1 settings, 2.2 roles and demo users, 2.3 warehouses.
 """
 import frappe
 
@@ -117,10 +117,46 @@ def roles():
             _change(f"user {email}: {have} -> {sorted(profiles)}")
 
 
+# 2.3 Warehouses -----------------------------------------------------------------------------
+
+ABBR = "STPL"
+ROOT_WAREHOUSE = f"All Warehouses - {ABBR}"
+# new warehouse -> extra fields. Rejected is flagged so Pick Lists never pick rejected stock.
+NEW_WAREHOUSES = {
+    "Rejected": {"is_rejected_warehouse": 1},
+    "Repair RMA": {},
+}
+DISABLE_IF_EMPTY = ["Raw Material"]
+
+
+def warehouses():
+    for name, extra in NEW_WAREHOUSES.items():
+        full = f"{name} - {ABBR}"
+        if not frappe.db.exists("Warehouse", full):
+            frappe.get_doc({"doctype": "Warehouse", "warehouse_name": name, "company": COMPANY,
+                            "parent_warehouse": ROOT_WAREHOUSE, "is_group": 0, **extra}).insert()
+            _change(f"warehouse {full}")
+        else:
+            _set_values("Warehouse", full, {"disabled": 0, **extra})
+
+    for name in DISABLE_IF_EMPTY:
+        full = f"{name} - {ABBR}"
+        if not frappe.db.exists("Warehouse", full) or frappe.db.get_value("Warehouse", full, "disabled"):
+            continue
+        used = (frappe.db.count("Stock Ledger Entry", {"warehouse": full})
+                + frappe.db.count("Bin", {"warehouse": full})
+                + frappe.db.count("Item Default", {"default_warehouse": full})
+                + frappe.db.count("Warehouse", {"parent_warehouse": full}))
+        if used:
+            frappe.throw(f"{full} is not empty or still referenced ({used} rows); not disabling")
+        _set_values("Warehouse", full, {"disabled": 1})
+
+
 def run():
     _changes.clear()
     settings()
     roles()
+    warehouses()
     frappe.db.commit()
     frappe.clear_cache()
     _log(f"done: {len(_changes)} changes")

@@ -17,7 +17,8 @@ Spec: `erpnext/SPEC_PHASE1.md`. Roles, warehouses, item code scheme, job codes (
 - [x] §1 demo cleanup (2026-10-28): `satcom_demo_cleanup.py`, 41 changes, rerun 0. Backups `D:\ERPNext-Backups\20261028_134403-pre-cleanup\` and `…135119-post-cleanup\`. Afterwards 0 GL / 0 stock ledger rows, Stock Balance empty.
 - [x] §2.1 settings (2026-10-28): `satcom_p1_foundation.py` switched perpetual inventory off and maintain-same-rate off (rerun 0 changes); valuation stays FIFO; `satcom_p1_check.verify` 11/11 PASS. Backup `…135203-pre-2.1\`.
 - [x] §2.2 roles (2026-10-30): roles `Satcom Approver`, `Satcom Indenter`; one Role Profile per Satcom role; 5 demo users; installer 12 changes, rerun 0; `verify` 24/24 PASS. Backup `…20261030_132537-pre-2.2\`.
-- [ ] §2.3 warehouses onward.
+- [x] §2.3 warehouses (2026-10-30): added `Rejected - STPL` and `Repair RMA - STPL`; `Raw Material - STPL` disabled after checking it had no stock, ledger rows, item defaults or child warehouses; installer 3 changes, rerun 0; `verify` 35/35 PASS. Backup `…20261030_132933-pre-2.3\`.
+- [ ] §2.4 item code scheme onward.
 - [ ] Built section by section; acceptance check (spec §10) passes.
 
 Technical decisions (made within the spec, demo data only; Rahul delegated these 2026-10-28):
@@ -25,6 +26,7 @@ Technical decisions (made within the spec, demo data only; Rahul delegated these
 - 2026-10-28, cleanup: `frappe.delete_doc` steps a naming series back when it deletes the last-numbered record, which reset 5 counters (MAT-STE, MFG-WO, PROJ, PUR-ORD, TASK) to 0. Put back by hand to the phase 0 values, and the module now keeps every counter itself.
 - 2026-10-30, §2.2: each Satcom role in the spec table is a **Role Profile** of the same name (v16 lets a user hold several profiles), so giving someone a Satcom role is one pick and profile edits flow to every holder. Users with profiles get their roles only from the profiles. Accounts profile waits for phase 3.
 - 2026-10-30, §2.2: demo users are `demo.approver1/2`, `demo.indenter` (Indenter + Purchase), `demo.stores` (Stores + QC), `demo.allroles` (all five, for self-approval tests), all `@example.com`, no password and no welcome email. The check uses them server-side; to try them in the UI, set a password on the User.
+- 2026-10-30, §2.3: `Rejected - STPL` has v16's "Is Rejected Warehouse" flag on. It only keeps Pick Lists (and sales-order / subcontracting warehouse defaults) from using it, and blocks no stock entry, so QC Release (§5.2) can still move stock in and out.
 - 2026-10-28: `satcom_factory_setup.py` now sets maintain-same-rate **off**, so rerunning it can't undo §2.1. `satcom_sample_data.py` is marked retired. `satcom_qr_labels.render_check` still names demo records; it will be updated in §6.
 - [ ] Open items still to be decided are listed in spec §11.
 
