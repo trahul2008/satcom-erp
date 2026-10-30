@@ -3,7 +3,7 @@
     bench --site frontend execute erpnext.satcom_p1_check.verify
 Prints PASS/FAIL per line and a summary. It grows with each section as it is built; the DEMO
 scenario (create_demo / cleanup, spec section 10) is added once the sections it needs exist.
-Built so far: 1 demo cleanup, 2.1 settings.
+Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles.
 """
 import frappe
 
@@ -43,9 +43,29 @@ def _section_2_1_settings():
     _check("2.1 maintain same rate off", not bs.maintain_same_rate, bs.maintain_same_rate)
 
 
+def _section_2_2_roles():
+    from erpnext.satcom_p1_foundation import CUSTOM_ROLES, DEMO_USERS, ROLE_PROFILES
+
+    for role in CUSTOM_ROLES:
+        r = frappe.db.get_value("Role", role, ["desk_access", "disabled"], as_dict=True)
+        _check(f"2.2 role {role} exists with desk access", r and r.desk_access and not r.disabled, r)
+    for profile, wanted in ROLE_PROFILES.items():
+        have = sorted(frappe.get_all("Has Role", filters={"parenttype": "Role Profile", "parent": profile},
+                                     pluck="role"))
+        _check(f"2.2 profile {profile} = {', '.join(wanted)}", have == sorted(wanted), have)
+    for email, (_, profiles) in DEMO_USERS.items():
+        wanted = sorted({r for p in profiles for r in ROLE_PROFILES[p]})
+        have = sorted(set(frappe.get_roles(email)) - {"All", "Guest", "Desk User"})
+        enabled = frappe.db.get_value("User", email, "enabled")
+        _check(f"2.2 {email} holds {', '.join(profiles)}", enabled and have == wanted, f"have {have}")
+    approvers = [e for e in DEMO_USERS if "Satcom Approver" in frappe.get_roles(e)]
+    _check("2.2 at least two demo approvers", len(approvers) >= 2, approvers)
+
+
 def verify():
     _results.clear()
     _section_1_cleanup()
     _section_2_1_settings()
+    _section_2_2_roles()
     failed = _results.count(False)
     print(f"{len(_results) - failed}/{len(_results)} PASS" + (f", {failed} FAIL" if failed else ""))
