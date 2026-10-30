@@ -3,7 +3,7 @@
     bench --site frontend execute erpnext.satcom_p1_check.verify
 Prints PASS/FAIL per line and a summary. It grows with each section as it is built; the DEMO
 scenario (create_demo / cleanup, spec section 10) is added once the sections it needs exist.
-Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses.
+Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses, 2.4 item codes.
 """
 import frappe
 
@@ -73,11 +73,39 @@ def _section_2_3_warehouses():
     _check("2.3 Raw Material - STPL disabled", frappe.db.get_value("Warehouse", "Raw Material - STPL", "disabled"))
 
 
+def _section_2_4_items():
+    from erpnext.satcom_p1_foundation import ATTRIBUTES, ITEM_GROUPS, TEMPLATES
+
+    for group, (prefix, code_type) in ITEM_GROUPS.items():
+        g = frappe.db.get_value("Item Group", group, ["satcom_prefix", "satcom_code_type"], as_dict=True)
+        _check(f"2.4 group {group} = {prefix} / {code_type}",
+               g and g.satcom_prefix == prefix and g.satcom_code_type == code_type, g)
+    for fieldname in ("satcom_mpn", "satcom_manufacturer", "satcom_drawing_no", "satcom_drawing_rev"):
+        _check(f"2.4 Item field {fieldname}", frappe.db.exists("Custom Field", {"dt": "Item", "fieldname": fieldname}))
+    for attribute, values in ATTRIBUTES.items():
+        have = set(frappe.get_all("Item Attribute Value", filters={"parent": attribute}, pluck="abbr"))
+        _check(f"2.4 attribute {attribute} has {', '.join(values)}", set(values) <= have, sorted(have))
+    for code, (_, group, attributes) in TEMPLATES.items():
+        t = frappe.db.get_value("Item", code, ["has_variants", "item_group", "has_batch_no"], as_dict=True)
+        attrs = frappe.get_all("Item Variant Attribute", filters={"parent": code}, pluck="attribute", order_by="idx")
+        _check(f"2.4 template {code} ({', '.join(attributes)})",
+               t and t.has_variants and t.item_group == group and t.has_batch_no and attrs == attributes, (t, attrs))
+    for name, event in (("Satcom Item - number", "Before Insert"), ("Satcom Item - rules", "Before Save")):
+        s = frappe.db.get_value("Server Script", name, ["disabled", "doctype_event", "reference_doctype"], as_dict=True)
+        _check(f"2.4 server script {name}", s and not s.disabled and s.doctype_event == event and s.reference_doctype == "Item", s)
+    _check("2.4 client script Satcom Item", frappe.db.get_value("Client Script", "Satcom Item", "enabled"))
+    copied = set(frappe.get_all("Variant Field", pluck="field_name"))
+    _check("2.4 variants copy description, not the series",
+           "description" in copied and not {"serial_no_series", "batch_number_series"} & copied)
+    _check("2.4 New Item opens the full form", frappe.get_meta("Item").quick_entry == 0)
+
+
 def verify():
     _results.clear()
     _section_1_cleanup()
     _section_2_1_settings()
     _section_2_2_roles()
     _section_2_3_warehouses()
+    _section_2_4_items()
     failed = _results.count(False)
     print(f"{len(_results) - failed}/{len(_results)} PASS" + (f", {failed} FAIL" if failed else ""))
