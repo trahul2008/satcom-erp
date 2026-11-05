@@ -212,6 +212,17 @@ def _doctype_property(doctype, prop, value, property_type):
     _change(f"{doctype} property {prop} = {value}")
 
 
+def _field_property(doctype, fieldname, prop, value, property_type):
+    current = frappe.db.get_value("Property Setter", {"doc_type": doctype, "doctype_or_field": "DocField",
+                                                       "field_name": fieldname, "property": prop}, "value")
+    if current is not None and str(current) == str(value):
+        return
+    frappe.make_property_setter({"doctype": doctype, "doctype_or_field": "DocField", "fieldname": fieldname,
+                                 "property": prop, "value": value, "property_type": property_type},
+                                validate_fields_for_doctype=False)
+    _change(f"{doctype}.{fieldname} {prop} = {value}")
+
+
 # 2.4 Item code scheme -----------------------------------------------------------------------
 
 # Item Group -> (prefix, code type); groups without an entry keep no prefix and get no new items
@@ -274,7 +285,7 @@ def items():
             _set_values("Item Group", group, {"satcom_prefix": prefix, "satcom_code_type": code_type})
 
     _custom_field("Item", "satcom_part_section", label="Part Identification", fieldtype="Section Break",
-                  insert_after="description")
+                  insert_after="is_customer_provided_item")  # Details tab, after Item Attributes
     _custom_field("Item", "satcom_mpn", label="Manufacturer Part No", fieldtype="Data",
                   insert_after="satcom_part_section", in_standard_filter=1, search_index=1)
     _custom_field("Item", "satcom_manufacturer", label="Manufacturer", fieldtype="Data",
@@ -312,6 +323,9 @@ def items():
 
     # the full form (custom fields, client script) instead of the quick-entry dialog
     _doctype_property("Item", "quick_entry", 0, "Check")
+    # sections holding required inputs stay open (they were collapsed on a new item)
+    for section in ("section_break_11", "serial_nos_and_batches"):  # Description; Serial Nos / Batches
+        _field_property("Item", section, "collapsible", 0, "Check")
 
     _server_script("Satcom Item - number", "Item", "Before Insert", "satcom_item_number.py")
     _server_script("Satcom Item - rules", "Item", "Before Save", "satcom_item_rules.py")

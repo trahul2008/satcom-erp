@@ -98,6 +98,25 @@ def _section_2_4_items():
     _check("2.4 variants copy description, not the series",
            "description" in copied and not {"serial_no_series", "batch_number_series"} & copied)
     _check("2.4 New Item opens the full form", frappe.get_meta("Item").quick_entry == 0)
+    collapsed = [f.fieldname for f in frappe.get_meta("Item").fields
+                 if f.fieldname in ("section_break_11", "serial_nos_and_batches") and f.collapsible]
+    _check("2.4 Description and Serial Nos / Batches sections open", not collapsed, collapsed)
+
+
+def cleanup():
+    """Remove DEMO test records (writes). Items: name or Manufacturer Part No starting with DEMO.
+    Their Deleted Document rows go too, so test runs don't use up real item numbers."""
+    items = sorted({i.name for i in frappe.get_all("Item", filters={"item_name": ["like", "DEMO%"]}, fields=["name"])}
+                   | {i.name for i in frappe.get_all("Item", filters={"satcom_mpn": ["like", "DEMO%"]}, fields=["name"])})
+    for name in items:
+        frappe.delete_doc("Item", name)
+        print(f"deleted Item {name}")
+    if items:
+        n = frappe.db.count("Deleted Document", {"deleted_doctype": "Item", "deleted_name": ["in", items]})
+        frappe.db.delete("Deleted Document", {"deleted_doctype": "Item", "deleted_name": ["in", items]})
+        print(f"removed {n} Deleted Document row(s)")
+    frappe.db.commit()
+    print(f"cleanup: {len(items)} DEMO item(s)")
 
 
 def verify():
