@@ -14,6 +14,9 @@ compose file. Built 2026-10-13 as a demo; becoming the real factory system (phas
 - After restarting `backend`, restart `frontend` too (nginx caches the backend's IP -> 502).
 - Roles are tied to B: if B is down ERPNext is down. Do not add it to Set-FilesReplica.
 
+## Nightly backup
+`satcom-erp-backup.timer` in the VM, 00:30 IST: bench backup, 14 days in `/var/backups/erpnext`, Borg to Server A `D:\ErpBackup` (30 days). Log `/var/log/satcom-erp-backup.log`; run now with `sudo systemctl start satcom-erp-backup.service`. Setup, rollback and restore: `docs/plan-erpnext.md` (Go-live, Backups); files in `erpnext/backup/`, `scripts/Set-ErpBackupShare.ps1`.
+
 ## Backup before every change run
 `bench --site frontend backup --with-files` in the backend container; the four files land in
 `sites/frontend/private/backups/<ts>-frontend-*`. Copy them off the VM (`docker compose cp` to a
