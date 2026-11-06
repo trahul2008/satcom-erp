@@ -2,7 +2,8 @@
 # SPEC_PHASE1 2.4. Source of truth is this file; satcom_p1_foundation.py writes it into ERPNext.
 #
 # Code format and prefix on every save (codes never change); the "required on new items" list
-# only when the item is being created; MPN duplicate guard; serial / batch series.
+# only when the item is being created (Part No only in groups with "Part No required");
+# MPN duplicate guard in every group; serial / batch series.
 
 # Sandbox limits: no str.format (unsafe attribute), and no comprehensions / generator expressions
 # over top-level names (they run in their own scope and can't see them).
@@ -12,7 +13,7 @@ problems = []
 code = doc.item_code or doc.name or ""
 group = None
 if doc.item_group:
-    group = frappe.db.get_value("Item Group", doc.item_group, ["satcom_prefix", "satcom_code_type"], as_dict=True)
+    group = frappe.db.get_value("Item Group", doc.item_group, ["satcom_prefix", "satcom_code_type", "satcom_part_no_required"], as_dict=True)
 prefix = group.satcom_prefix if group else None
 is_new = bool(doc.flags.in_insert)
 
@@ -46,7 +47,9 @@ if is_new:
         problems.append("Description is required.")
     if not doc.stock_uom:
         problems.append("Default Unit of Measure is required.")
-    if not doc.has_variants and not (doc.satcom_mpn or "").strip() and not (doc.satcom_drawing_no or "").strip():
+    part_no_required = bool(group and group.satcom_part_no_required)
+    has_part_no = (doc.satcom_mpn or "").strip() or (doc.satcom_drawing_no or "").strip()
+    if part_no_required and not doc.has_variants and not has_part_no:
         problems.append("Enter the Manufacturer Part No or the Drawing No.")
     if bool(doc.has_serial_no) == bool(doc.has_batch_no):
         problems.append("Tick exactly one of Has Serial No (one label per piece) or Has Batch No (one label per lot), on the Inventory tab.")

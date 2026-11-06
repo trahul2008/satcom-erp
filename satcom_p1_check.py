@@ -74,12 +74,15 @@ def _section_2_3_warehouses():
 
 
 def _section_2_4_items():
-    from erpnext.satcom_p1_foundation import ATTRIBUTES, ITEM_GROUPS, TEMPLATES
+    from erpnext.satcom_p1_foundation import ATTRIBUTES, ITEM_GROUPS, PART_NO_OPTIONAL, TEMPLATES
 
     for group, (prefix, code_type) in ITEM_GROUPS.items():
-        g = frappe.db.get_value("Item Group", group, ["satcom_prefix", "satcom_code_type"], as_dict=True)
-        _check(f"2.4 group {group} = {prefix} / {code_type}",
-               g and g.satcom_prefix == prefix and g.satcom_code_type == code_type, g)
+        part_no = 0 if prefix in PART_NO_OPTIONAL else 1
+        g = frappe.db.get_value("Item Group", group, ["satcom_prefix", "satcom_code_type", "satcom_part_no_required"],
+                                as_dict=True)
+        _check(f"2.4 group {group} = {prefix} / {code_type} / Part No {'required' if part_no else 'optional'}",
+               g and g.satcom_prefix == prefix and g.satcom_code_type == code_type
+               and int(g.satcom_part_no_required or 0) == part_no, g)
     for fieldname in ("satcom_mpn", "satcom_manufacturer", "satcom_drawing_no", "satcom_drawing_rev"):
         _check(f"2.4 Item field {fieldname}", frappe.db.exists("Custom Field", {"dt": "Item", "fieldname": fieldname}))
     for attribute, values in ATTRIBUTES.items():

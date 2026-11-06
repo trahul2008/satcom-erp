@@ -244,6 +244,8 @@ ITEM_GROUPS = {
     "Sub Assemblies": ("SAS", "Number"),
     "Finished Goods": ("FGD", "Number"),
 }
+# groups whose parts usually have no manufacturer part no or drawing (screws, solder, boxes, hand tools)
+PART_NO_OPTIONAL = {"HWR", "CNS", "PKG", "TOL"}
 # Attribute -> seed values (value = abbreviation, so variant codes read RES-10K-0603). Stores adds more.
 ATTRIBUTES = {
     "Resistance": ["10K", "4K7", "100R"],
@@ -274,15 +276,21 @@ def items():
     _custom_field("Item Group", "satcom_code_type", label="Code Type", fieldtype="Select",
                   options="\nSpecs\nNumber", insert_after="satcom_prefix",
                   description="Specs: variants of one template (RES-10K-0603). Number: running number (RFC-0102).")
+    _custom_field("Item Group", "satcom_part_no_required", label="Part No required", fieldtype="Check",
+                  insert_after="satcom_code_type",
+                  description="New items in this group need a Manufacturer Part No or a Drawing No")
 
     for group, (prefix, code_type) in ITEM_GROUPS.items():
+        part_no = 0 if prefix in PART_NO_OPTIONAL else 1
         if not frappe.db.exists("Item Group", group):
             frappe.get_doc({"doctype": "Item Group", "item_group_name": group,
                             "parent_item_group": "All Item Groups", "is_group": 0,
-                            "satcom_prefix": prefix, "satcom_code_type": code_type}).insert()
+                            "satcom_prefix": prefix, "satcom_code_type": code_type,
+                            "satcom_part_no_required": part_no}).insert()
             _change(f"item group {group} ({prefix}, {code_type})")
         else:
-            _set_values("Item Group", group, {"satcom_prefix": prefix, "satcom_code_type": code_type})
+            _set_values("Item Group", group, {"satcom_prefix": prefix, "satcom_code_type": code_type,
+                                              "satcom_part_no_required": part_no})
 
     _custom_field("Item", "satcom_part_section", label="Part Identification", fieldtype="Section Break",
                   insert_after="is_customer_provided_item")  # Details tab, after Item Attributes
