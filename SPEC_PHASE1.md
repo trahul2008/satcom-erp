@@ -153,7 +153,7 @@ Prove this works for all three types before building on it. If v16 won't let a S
 ## 5. Goods receipt (GRN) and incoming QC
 
 ### 5.1 GRN = Purchase Receipt
-- Stores creates it against the PO. Required custom fields: `satcom_vendor_invoice_no`, `satcom_vendor_invoice_date`, `satcom_vendor_dc_no`, `satcom_vendor_dc_date`; at least one attachment (invoice/DC scan) before submit.
+- Stores creates it against the PO. **Interim (decision 6 Nov: build QC before §4):** until §4 is live, a GRN may be made without a PO (supplier, items, job per row). When §4 goes live, Buying Settings "Purchase Order Required" switches to Yes and GRNs must come from a PO. Required custom fields: `satcom_vendor_invoice_no`, `satcom_vendor_invoice_date`, `satcom_vendor_dc_no`, `satcom_vendor_dc_date`; at least one attachment (invoice/DC scan) before submit.
 - **All accepted quantity lands in `Quality Hold - STPL`** (default on the GRN; other target warehouses blocked).
 - Submitting creates serials/batches from the item series. Each Serial No and Batch records the job it was received for: `satcom_received_for_job` (Link Project), from the GRN row's `project`.
 - If the row's job has `satcom_certificates_required`, the row needs `satcom_cert_attached` (Check) and a certificate attachment before the material can be released (§5.2).
@@ -161,7 +161,7 @@ Prove this works for all three types before building on it. If v16 won't let a S
 ### 5.2 QC release (decision 27 Oct: QC confirms first)
 - **QC Release** = Stock Entry, Material Transfer from Quality Hold, with Inspection Required on; one Quality Inspection per row (per serial/batch where practical, per row with a sample size otherwise).
   - Accepted → `Stores - STPL`. Rejected → `Rejected - STPL`.
-- Inspection level comes from the job (`satcom_incoming_inspection`): show it on the inspection; 100% sets sample size = full qty. No job, or a stock build: Standard checks (the item's default template, written by QC).
+- Inspection level comes from the job (`satcom_incoming_inspection`): show it on the inspection; 100% sets sample size = full qty. No job, or a stock build: Standard checks (the item's default template, written by QC). Until QC writes per-group templates, install one starter template "Standard checks" (visual damage, part no / MPN matches, qty matches DC, packaging and ESD intact, documents received) and set it as the default on every Satcom item group's items; QC edits it in the UI.
 - Only Quality Manager submits Quality Inspections.
 - Stock Settings "Action if Quality Inspection is rejected" is **Stop**, which would block a QC Release that sends rejected rows to `Rejected - STPL`. Set it to **Warn**, and enforce the real rule in a Server Script on Stock Entry (Before Submit): a row whose inspection is **Rejected** may only go to `Rejected - STPL`, and a row going to `Stores - STPL` must have an **Accepted** inspection. On Purchase Receipts nothing is inspected (all of it lands in Quality Hold), so Warn changes nothing there.
 - A "Pending QC" view: everything in Quality Hold, oldest first, with GRN no, supplier, job and days waiting.
