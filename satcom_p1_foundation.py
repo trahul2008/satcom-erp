@@ -3,7 +3,7 @@
 Run (after satcom_demo_cleanup.run):
     bench --site frontend execute erpnext.satcom_p1_foundation.run
 Each step compares before it writes and prints only what it changed, so a second run reports
-"0 changes". Built so far: 2.1 settings, 2.2 roles and demo users, 2.3 warehouses, 2.4 item codes.
+"0 changes". Built so far: 2.1 settings, 2.2 roles and demo users, 2.3 warehouses, 2.4 item codes, 2.5 job codes.
 Copy erpnext/server_scripts and erpnext/client_scripts to /tmp/satcom_scripts in the backend
 container first (the installer reads the script sources from there).
 """
@@ -353,12 +353,62 @@ def items():
         _change(f"template item {code} ({', '.join(attributes)})")
 
 
+# 2.5 Job codes (Project) --------------------------------------------------------------------
+
+JOB_TYPES = ["Customer Order", "Stock Build", "Extension"]
+INSPECTION_LEVELS = ["Standard checks", "100% inspection", "Sampling as per customer"]
+
+
+def jobs():
+    _custom_field("Project", "satcom_job_type", label="Job Type", fieldtype="Select",
+                  options="\n" + "\n".join(JOB_TYPES), reqd=1, set_only_once=1, in_list_view=1,
+                  in_standard_filter=1, insert_after="project_name",
+                  description="Customer Order: J-YY-NNNN. Stock Build: S-YY-NNNN. Extension: parent job + -NN.")
+    _custom_field("Project", "satcom_job_title", label="Job Title", fieldtype="Data", reqd=1,
+                  in_list_view=1, in_global_search=1, insert_after="satcom_job_type",
+                  description="What the job is, in words (the code is given on save)")
+    _custom_field("Project", "satcom_parent_job", label="Parent Job", fieldtype="Link", options="Project",
+                  set_only_once=1, insert_after="satcom_job_title",
+                  depends_on="eval:doc.satcom_job_type=='Extension'",
+                  mandatory_depends_on="eval:doc.satcom_job_type=='Extension'")
+    _custom_field("Project", "satcom_customer_po_no", label="Customer PO No", fieldtype="Data",
+                  insert_after="satcom_parent_job", depends_on="eval:doc.satcom_job_type=='Customer Order'",
+                  mandatory_depends_on="eval:doc.satcom_job_type=='Customer Order'")
+    _custom_field("Project", "satcom_customer_po_date", label="Customer PO Date", fieldtype="Date",
+                  insert_after="satcom_customer_po_no", depends_on="eval:doc.satcom_job_type=='Customer Order'",
+                  mandatory_depends_on="eval:doc.satcom_job_type=='Customer Order'")
+    _custom_field("Project", "satcom_qc_section", label="Incoming QC", fieldtype="Section Break",
+                  insert_after="percent_complete")
+    _custom_field("Project", "satcom_incoming_inspection", label="Incoming Inspection", fieldtype="Select",
+                  options="\n".join(INSPECTION_LEVELS), default="Standard checks", insert_after="satcom_qc_section")
+    _custom_field("Project", "satcom_certificates_required", label="Supplier Test Certificates Required",
+                  fieldtype="Check", insert_after="satcom_incoming_inspection",
+                  description="Receipts for this job need the supplier's test certificate before QC release")
+    _custom_field("Project", "satcom_qc_cb", fieldtype="Column Break", insert_after="satcom_certificates_required")
+    _custom_field("Project", "satcom_qc_notes", label="Customer QC Requirements", fieldtype="Small Text",
+                  insert_after="satcom_qc_cb")
+
+    # the code is given on save, never typed: Project Name = the code, read-only; series hidden
+    _field_property("Project", "project_name", "reqd", 0, "Check")
+    _field_property("Project", "project_name", "read_only", 1, "Check")
+    _field_property("Project", "project_name", "label", "Job Code", "Data")
+    _field_property("Project", "naming_series", "hidden", 1, "Check")
+    _field_property("Project", "customer", "mandatory_depends_on",
+                    "eval:doc.satcom_job_type=='Customer Order'", "Code")
+    _doctype_property("Project", "quick_entry", 0, "Check")
+
+    _server_script("Satcom Project - job code", "Project", "Before Insert", "satcom_project_code.py")
+    _server_script("Satcom Project - job code check", "Project", "After Insert", "satcom_project_code_check.py")
+    _server_script("Satcom Project - rules", "Project", "Before Save", "satcom_project_rules.py")
+
+
 def run():
     _changes.clear()
     settings()
     roles()
     warehouses()
     items()
+    jobs()
     frappe.db.commit()
     frappe.clear_cache()
     _log(f"done: {len(_changes)} changes")
