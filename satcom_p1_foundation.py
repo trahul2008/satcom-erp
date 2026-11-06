@@ -223,6 +223,25 @@ def _field_property(doctype, fieldname, prop, value, property_type):
     _change(f"{doctype}.{fieldname} {prop} = {value}")
 
 
+def _move_field(doctype, fieldname, before):
+    """Put a standard field just before another one (the DocType's field_order Property Setter,
+    as Customize Form writes it)."""
+    import json
+
+    order = [d.fieldname for d in frappe.get_meta(doctype).fields]
+    if fieldname not in order or before not in order:
+        frappe.throw(f"{doctype}: {fieldname} or {before} not found")
+    if order.index(fieldname) == order.index(before) - 1:
+        return
+    order.remove(fieldname)
+    order.insert(order.index(before), fieldname)
+    frappe.make_property_setter({"doctype": doctype, "doctype_or_field": "DocType", "property": "field_order",
+                                 "value": json.dumps(order), "property_type": "Data"},
+                                validate_fields_for_doctype=False)
+    frappe.clear_cache(doctype=doctype)
+    _change(f"{doctype}: {fieldname} moved before {before}")
+
+
 # 2.4 Item code scheme -----------------------------------------------------------------------
 
 # Item Group -> (prefix, code type); groups without an entry keep no prefix and get no new items
@@ -396,10 +415,51 @@ def jobs():
     _field_property("Project", "customer", "mandatory_depends_on",
                     "eval:doc.satcom_job_type=='Customer Order'", "Code")
     _doctype_property("Project", "quick_entry", 0, "Check")
+    # job pickers (indent, PO, GRN, issue) show the title next to the code
+    _doctype_property("Project", "search_fields", "satcom_job_title,customer,status", "Data")
+    # Customer sits on the More Info tab; a Customer Order needs it, so show it before the PO fields
+    _move_field("Project", "customer", before="satcom_customer_po_no")
 
     _server_script("Satcom Project - job code", "Project", "Before Insert", "satcom_project_code.py")
     _server_script("Satcom Project - job code check", "Project", "After Insert", "satcom_project_code_check.py")
     _server_script("Satcom Project - rules", "Project", "Before Save", "satcom_project_rules.py")
+
+
+def _grant(doctype, role, **ptypes):
+    """Make sure `role` holds these permissions (read=1, create=1 ...) at level 0 on `doctype`.
+    Uses Custom DocPerm: the first grant on a doctype copies its standard rules there first."""
+    from frappe.permissions import setup_custom_perms
+
+    if setup_custom_perms(doctype):
+        _change(f"{doctype}: standard permissions copied to Custom DocPerm")
+    name = frappe.db.get_value("Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0})
+    if not name:
+        frappe.get_doc({"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+                        "parentfield": "permissions", "role": role, "permlevel": 0, **ptypes}).insert()
+        _change(f"{doctype}: {role} gets {', '.join(ptypes)}")
+        frappe.clear_cache(doctype=doctype)
+        return
+    doc = frappe.get_doc("Custom DocPerm", name)
+    missing = {p: v for p, v in ptypes.items() if int(doc.get(p) or 0) != v}
+    if missing:
+        doc.update(missing)
+        doc.save()
+        _change(f"{doctype}: {role} gets {', '.join(missing)}")
+        frappe.clear_cache(doctype=doctype)
+
+
+# who picks a job on indents (Projects User has it), POs (Purchase User), GRNs and issues
+# (Stock User; approvers too, through their profile) and QC release (Quality Manager)
+JOB_READERS = ["Purchase User", "Stock User", "Quality Manager"]
+
+
+def job_access():
+    """Spec 2.5: Satcom Indenter may create Customers until phase 3 (name, type, GSTIN = Tax ID,
+    billing address: Address create comes with Purchase User); job pickers read Project and Customer."""
+    _grant("Customer", "Satcom Indenter", read=1, write=1, create=1, select=1)
+    for role in JOB_READERS:
+        _grant("Project", role, read=1, select=1)
+        _grant("Customer", role, read=1, select=1)
 
 
 def run():
@@ -409,6 +469,7 @@ def run():
     warehouses()
     items()
     jobs()
+    job_access()
     frappe.db.commit()
     frappe.clear_cache()
     _log(f"done: {len(_changes)} changes")
