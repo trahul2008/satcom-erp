@@ -73,6 +73,25 @@ Server work under the root `CLAUDE.md`; reuse the Nextcloud patterns (`docs/plan
 - [ ] **Backups:** nightly `bench backup --with-files` copied off the VM to Server A (`D:`), retention, a tested restore, an alert when the backup is older than 26 h.
 - [ ] **Redundancy:** decide Hyper-V Replica B → A with a failover script (same as `satcom-files`), or backups only.
 - [ ] **Network:** move to `VM-LAN` at 192.168.1.91 (MAC reserved) when Ethernet 4 is cabled, or keep VM-NAT + port proxy.
+- [x] **LAN access (interim, 2026-11-06):** the 8081 port proxy on B now survives a boot. Until then it listened on `192.168.1.86` only; IP Helper starts before that address is assigned and never retries, so after each of B's 8 power losses since 10-28 `http://192.168.1.86:8081` was dead until someone restarted `iphlpsvc` (it was dead again on 11-06 before the fix: rule present, nothing listening). Now it listens on `0.0.0.0`, which binds at boot whatever the network state. Server B only, port 8081 only.
+  - Before: portproxy `192.168.1.86:8081 → 172.20.90.11:8080`; firewall rule "ERPNext demo (LAN)" (inbound TCP 8081, allow, profile Any, remote already `192.168.1.0/24`); `iphlpsvc` Running/Automatic; no `\Satcom\Restart IP Helper` stopgap task (none created).
+  - Commands (elevated, on B):
+    ```
+    netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8081 connectaddress=172.20.90.11 connectport=8080
+    netsh interface portproxy delete v4tov4 listenaddress=192.168.1.86 listenport=8081
+    Get-NetFirewallRule -DisplayName 'ERPNext demo (LAN)' | Set-NetFirewallRule -NewDisplayName 'ERPNext (LAN)'
+    Get-NetFirewallRule -DisplayName 'ERPNext (LAN)' | Set-NetFirewallRule -RemoteAddress 192.168.1.0/24 -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8081
+    Set-Service iphlpsvc -StartupType Automatic   # was already; Start-Service if not Running
+    ```
+  - Proved: from the dev PC on the LAN (192.168.1.50) `Test-NetConnection 192.168.1.86 -Port 8081` succeeded and `/login` returned 200; `Restart-Service iphlpsvc` alone brought `0.0.0.0:8081` back in 3.7 s and `/login` was 200 again. B was not rebooted, so the next power cut is the real boot test.
+  - Note: `0.0.0.0` also answers on B's other addresses (`.84`, `.87` when B serves, Tailscale, VM-NAT); the firewall rule's `192.168.1.0/24` scope keeps Tailscale and VM-NAT clients out.
+  - Rollback:
+    ```
+    netsh interface portproxy add v4tov4 listenaddress=192.168.1.86 listenport=8081 connectaddress=172.20.90.11 connectport=8080
+    netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=8081
+    Get-NetFirewallRule -DisplayName 'ERPNext (LAN)' | Set-NetFirewallRule -NewDisplayName 'ERPNext demo (LAN)'
+    ```
+  - Long term unchanged: the VM gets its own LAN NIC at 192.168.1.91 behind nginx/HTTPS (Network and Publishing items), and the 8081 proxy and rule are removed then.
 - [ ] **Publishing:** HTTPS name (e.g. `erp.satcomindia.in`, to be decided) through nginx on both servers, office DNS zone, Let's Encrypt via `Update-SatcomCertificate.ps1`; retire plain HTTP on 8081.
 - [ ] **Sign-in:** Google Workspace (Frappe social login) for office staff, local accounts with 2FA for the rest; real users and roles.
 - [ ] **Email:** Workspace SMTP relay, as for the workforce app and Nextcloud. Before turning it on, review the standard Notifications that are enabled (e.g. "Material Request Receipt Notification") so nothing unexpected starts mailing people.
