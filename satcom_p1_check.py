@@ -286,6 +286,19 @@ def create_demo():
     _as(ALL_ROLES, lambda: _expect_block("approver submits own indent directly", lambda: frappe.get_doc(
         "Material Request", c).submit()))
 
+    d = raise_and_send(INDENTER, "DEMO indent to cancel", made[0], codes["RFC"])
+    _as(APPROVER, lambda: apply_workflow(frappe.get_doc("Material Request", d), "Approve"))
+    _as(INDENTER, lambda: _expect_block("indenter cancels an approved indent", lambda: frappe.get_doc(
+        "Material Request", d).cancel()))
+    _as(APPROVER, lambda: _expect_block("approver cancels without a reason", lambda: frappe.get_doc(
+        "Material Request", d).cancel()))
+
+    def cancel_with_reason():
+        frappe.db.set_value("Material Request", d, "satcom_cancel_reason", "DEMO: quantity changed")
+        return frappe.get_doc("Material Request", d).cancel()
+    _as(APPROVER, cancel_with_reason)
+    print(f"indent {d} cancelled by {APPROVER}: {frappe.db.get_value('Material Request', d, 'workflow_state')}")
+
     _as(INDENTER, lambda: _expect_block("indent without a job (RF part)", lambda: _indent(
         "DEMO try", None, codes["RFC"]).insert()))
 
@@ -329,6 +342,7 @@ def cleanup():
                              fields=["name", "docstatus"], order_by="name desc")
     for mr in indents:
         if mr.docstatus == 1:
+            frappe.db.set_value("Material Request", mr.name, "satcom_cancel_reason", "DEMO cleanup")
             frappe.get_doc("Material Request", mr.name).cancel()
         for dt, field in (("Workflow Action", "reference_name"), ("Notification Log", "document_name")):
             frappe.db.delete(dt, {field: mr.name})
@@ -374,9 +388,14 @@ def _section_3_indents():
     meta = frappe.get_meta("Material Request")
     _check("3 Material Request fields satcom_job, satcom_rejection_reason",
            meta.has_field("satcom_job") and meta.has_field("satcom_rejection_reason"))
-    for name, event in (("Satcom Indent - rules", "Before Save"), ("Satcom Indent - approval guard", "Before Submit")):
+    for name, event in (("Satcom Indent - rules", "Before Save"), ("Satcom Indent - approval guard", "Before Submit"),
+                        ("Satcom Indent - cancel guard", "Before Cancel")):
         sc = frappe.db.get_value("Server Script", name, ["disabled", "doctype_event"], as_dict=True)
         _check(f"3 server script {name}", sc and not sc.disabled and sc.doctype_event == event, sc)
+    _check("3 client script Satcom Indent (reason dialogs)", frappe.db.get_value("Client Script", "Satcom Indent", "enabled"))
+    _check("3 header Required By is mandatory", meta.get_field("schedule_date").reqd)
+    _check("3 Cancel Reason field (editable after submit)",
+           meta.has_field("satcom_cancel_reason") and meta.get_field("satcom_cancel_reason").allow_on_submit)
     wf = frappe.get_doc("Workflow", INDENT_WORKFLOW) if frappe.db.exists("Workflow", INDENT_WORKFLOW) else None
     _check(f"3 workflow {INDENT_WORKFLOW} active on Material Request, no email",
            wf and wf.is_active and wf.document_type == "Material Request" and not wf.send_email_alert)
@@ -407,6 +426,10 @@ def _section_3_indents():
                b and not b.satcom_job and b.workflow_state == "Rejected" and b.satcom_rejection_reason, b)
         c = demo.get("DEMO self-approval try")
         _check("3 demo self-approval stays pending", c and c.workflow_state == "Pending Approval" and c.docstatus == 0, c)
+        x = demo.get("DEMO indent to cancel")
+        _check("3 demo approved indent cancelled by an approver with a reason",
+               x and x.workflow_state == "Cancelled" and x.docstatus == 2
+               and frappe.db.get_value("Material Request", x.name, "satcom_cancel_reason"), x)
         for mr, user in ((a, APPROVER), (a, INDENTER), (b, INDENTER)):
             n = frappe.db.count("Notification Log", {"document_type": "Material Request",
                                                      "document_name": mr.name, "for_user": user}) if mr else 0

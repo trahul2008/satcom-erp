@@ -17,6 +17,8 @@ INDENT_STATES = {
     "Pending Approval": ("0", "Satcom Approver", "Warning"),
     "Approved": ("1", "Satcom Approver", "Success"),
     "Rejected": ("0", "Satcom Approver", "Danger"),
+    # set by Frappe itself when an approved indent is cancelled (cancel guard: approvers only)
+    "Cancelled": ("2", "Satcom Approver", "Danger"),
 }
 # (state, action, next state, allowed role, allow self approval). Every indent needs approval,
 # whatever its value (decision 27 Oct); to let small indents through later, give the Approve
@@ -59,10 +61,18 @@ def indents():
     f._custom_field("Material Request", "satcom_rejection_reason", label="Rejection Reason", fieldtype="Small Text",
                     insert_after="satcom_job", no_copy=1,
                     depends_on='eval:["Pending Approval", "Rejected"].includes(doc.workflow_state)',
-                    description="Approver: fill this in before you click Reject")
+                    description="Asked for when an approver clicks Reject")
     f._server_script("Satcom Indent - rules", "Material Request", "Before Save", "satcom_indent_rules.py")
     f._server_script("Satcom Indent - approval guard", "Material Request", "Before Submit",
                      "satcom_indent_approval_guard.py")
+    f._custom_field("Material Request", "satcom_cancel_reason", label="Cancel Reason", fieldtype="Small Text",
+                    insert_after="satcom_rejection_reason", no_copy=1, allow_on_submit=1, read_only=1,
+                    depends_on="eval:doc.satcom_cancel_reason")
+    f._server_script("Satcom Indent - cancel guard", "Material Request", "Before Cancel",
+                     "satcom_indent_cancel_guard.py")
+    f._client_script("Satcom Indent", "Material Request", "satcom_indent.js")
+    # Required By left the grid: the header date is the one people fill in, so it is mandatory
+    f._field_property("Material Request", "schedule_date", "reqd", 1, "Check")
 
     for field, cols in INDENT_GRID.items():
         f._field_property("Material Request Item", field, "in_list_view", 1, "Check")
