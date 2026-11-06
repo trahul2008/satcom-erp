@@ -103,6 +103,8 @@ Every item code = 3-letter category prefix + specs or a running number. Codes ne
 ### 2.5 Job codes (Project)
 Job code = **Project**, created by production/project in-charges.
 
+Customers: a Customer Order job needs a Customer record. Until phase 3 (when sales owns the customer master), the **Satcom Indenter** profile may create Customers too (name, type Company, GSTIN and billing address if known); no other customer fields are used in phase 1. Every role that picks a job on indents, POs, GRNs or issues gets read access to Project (and Customer, read only).
+
 Custom fields on Project:
 - `satcom_job_type` (Select, required): Customer Order / Stock Build / Extension
 - `satcom_job_title` (Data, required): the human description (the name becomes the code)
