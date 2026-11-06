@@ -127,6 +127,8 @@ Prove this works for all three types before building on it. If v16 won't let a S
 - Header field `satcom_job` (Link Project), required unless **every** row is in group TOL (tools bought outside a job; assumption, see §11). Copy it into each row's standard `project`.
 - The item grid shows stock in hand and projected qty per row, so the approver sees existing stock before approving.
 - **Workflow "Satcom Indent Approval":** Draft → Pending Approval (Satcom Indenter) → Approved (Satcom Approver; submits the document) or Rejected (Satcom Approver; reason required). Every indent needs approval, no value limit (decision 27 Oct; may change when staff join, so keep the rule easy to edit).
+- **Cancelling an approved indent:** only a Satcom Approver, with a reason (the same Rejection Reason field, or a Cancel Reason field), and only while no PO line refers to it. An indenter who needs a change asks an approver to cancel, then raises a new indent.
+- Rejecting: clicking Reject asks for the reason in a dialog and saves it, so the approver doesn't have to type, save and then reject.
 - Notifications: approvers when an indent reaches Pending Approval; the indenter on Approved/Rejected. **Outgoing email from ERPNext isn't set up yet**; use ERPNext's in-app notifications now and add email in the go-live phase.
 
 ## 4. Quotations and purchase orders
