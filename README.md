@@ -15,7 +15,7 @@ compose file. Built 2026-10-13 as a demo; becoming the real factory system (phas
 - Roles are tied to B: if B is down ERPNext is down. Do not add it to Set-FilesReplica.
 
 ## Nightly backup
-`satcom-erp-backup.timer` in the VM, 00:30 IST: bench backup, 14 days in `/var/backups/erpnext`, Borg to Server A `D:\ErpBackup` (30 days). Log `/var/log/satcom-erp-backup.log`; run now with `sudo systemctl start satcom-erp-backup.service`. Setup, rollback and restore: `docs/plan-erpnext.md` (Go-live, Backups); files in `erpnext/backup/`, `scripts/Set-ErpBackupShare.ps1`.
+`satcom-erp-backup.timer` in the VM, 00:30 IST: bench backup, 14 days in `/var/backups/erpnext`, Borg to Server A `D:\ErpBackup` (30 days). Log `/var/log/satcom-erp-backup.log`; run now with `sudo systemctl start satcom-erp-backup.service`. Setup, rollback and restore: `docs/plan-erpnext.md` (Go-live, Backups); files in `backup/`, `scripts/Set-ErpBackupShare.ps1`.
 
 ## Backup before every change run
 `bench --site frontend backup --with-files` in the backend container; the four files land in
@@ -25,12 +25,12 @@ temp dir, then `tar` over ssh) to `D:\ERPNext-Backups\<ts>-<label>\` on Rahul's 
 
 ## Running an installer module
 ```
-scp erpnext/<module>.py satcom-erp-nat:/tmp/
+scp <module>.py satcom-erp-nat:/tmp/
 ssh satcom-erp-nat "cd /opt/erpnext && sudo docker compose cp /tmp/<module>.py backend:/home/frappe/frappe-bench/apps/erpnext/erpnext/ && sudo docker compose exec -T backend bench --site frontend execute erpnext.<module>.run"
 ```
 Every module is idempotent: a second run reports `0 changes`.
 
-From §2.4 on, `satcom_p1_foundation.py` reads Server/Client Script sources from `/tmp/satcom_scripts` in the backend container: copy `erpnext/server_scripts` and `erpnext/client_scripts` there first (`docker compose cp`). Edit scripts only in those files, then rerun the installer.
+From §2.4 on, `satcom_p1_foundation.py` reads Server/Client Script sources from `/tmp/satcom_scripts` in the backend container: copy `server_scripts` and `client_scripts` there first (`docker compose cp`). Edit scripts only in those files, then rerun the installer.
 
 | Module | What | Status |
 |---|---|---|

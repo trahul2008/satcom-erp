@@ -16,7 +16,7 @@ Set-NextcloudBackupShare.ps1).
     rule "Satcom Nextcloud backup (SMB from the VM only)" already allows; this script checks that and
     stops if it does not. When the VM moves to VM-LAN (192.168.1.91) that rule needs .91 added.
 The credentials go to the VM by piping erpbackup-cifs-cred over SSH into a root-only file - see
-erpnext/backup/mount-backup.sh.
+backup/mount-backup.sh.
 
 .PARAMETER WhatIf
 Show what would be done.

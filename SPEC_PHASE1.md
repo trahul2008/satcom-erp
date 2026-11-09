@@ -1,9 +1,9 @@
 # ERPNext phase 1 build spec — purchase, stores, QR labels, incoming QC
 
-Rules for working on ERPNext: `erpnext/CLAUDE.md`. Roadmap and status: `docs/plan-erpnext.md`.
+Rules for working on ERPNext: `CLAUDE.md`. Roadmap and status: `docs/plan-erpnext.md`.
 
 **Where it runs:** the existing ERPNext v16.50.0 demo (stock `frappe/erpnext` image, frappe_docker compose) in VM `satcom-erp` on Server B, site `frontend`. This instance becomes the real system; there is no separate test site.
-**How it's built:** configuration as code. Idempotent installer modules in `erpnext/` (same pattern as `satcom_factory_setup.py`), run with `bench --site frontend execute …`. Runtime logic lives in Server Scripts and Client Scripts whose source is kept as files in the repo and loaded by the installer. **No custom app, no custom image.**
+**How it's built:** configuration as code. Idempotent installer modules in the repo root (same pattern as `satcom_factory_setup.py`), run with `bench --site frontend execute …`. Runtime logic lives in Server Scripts and Client Scripts whose source is kept as files in the repo and loaded by the installer. **No custom app, no custom image.**
 **Source of decisions:** "ERPNext Process Decisions" doc, decision log up to 27 Oct 2026. Every rule here comes from a recorded decision. Anything marked **OPEN** is undecided: build it as a setting with the stated default, and don't pick a different rule.
 
 ---
@@ -143,7 +143,7 @@ Prove this works for all three types before building on it. If v16 won't let a S
 - **Workflow "Satcom PO Approval":** Draft → Pending Approval (Purchase or Indenter) → Approved (Satcom Approver; submitted) or Rejected (reason required). Every PO needs approval.
 - Job code flows from indent rows (`project`) into PO rows. A PO row without a job code only for TOL items.
 - PO print format with a new letterhead **"Satcom Technologies"** (make it the default; the two generic ERPNext letterheads stay but aren't used). Details, from the warranty certificate footer:
-  - Logo: `erpnext/assets/satcom-logo.png` (cropped from a scan; replace with the original logo file when Rahul has it).
+  - Logo: `assets/satcom-logo.png` (cropped from a scan; replace with the original logo file when Rahul has it).
   - Registered office: 403, Bhanu Enclave, 7-1-638/1, Sunder Nagar, Erragadda, Hyderabad - 500 038. Ph: +91-40-2371 0333, Fax: +91-40-2371 3444, info@satcomindia.in, www.satcomindia.in
   - Factory: Plot No 12, EMC-TGIIC, Maheshwaram, Rangareddy District, Telangana 501 359
   - CIN: U32204TG1999PTC033193 · GSTIN: 36AAECS9513M1ZW
@@ -199,8 +199,8 @@ Workspace **"Satcom Purchase & Stores"**: shortcuts to new Indent, PO, GRN, QC R
 
 ## 9. How to build it
 
-- Installer modules in `erpnext/`, one per area, each idempotent with a `run()`: e.g. `satcom_p1_foundation.py`, `satcom_p1_purchase.py`, `satcom_p1_receipt_qc.py`, `satcom_p1_labels.py`, `satcom_p1_reports.py`, plus `satcom_demo_cleanup.py` and `satcom_p1_check.py`.
-- Server Script and Client Script **source lives in repo files** (e.g. `erpnext/server_scripts/<name>.py`, `erpnext/client_scripts/<name>.js`); the installer creates or updates the record from the file. Never edit them only in the UI: if a quick UI fix is made, copy it back to the file in the same session.
+- Installer modules in the repo root, one per area, each idempotent with a `run()`: e.g. `satcom_p1_foundation.py`, `satcom_p1_purchase.py`, `satcom_p1_receipt_qc.py`, `satcom_p1_labels.py`, `satcom_p1_reports.py`, plus `satcom_demo_cleanup.py` and `satcom_p1_check.py`.
+- Server Script and Client Script **source lives in repo files** (e.g. `server_scripts/<name>.py`, `client_scripts/<name>.js`); the installer creates or updates the record from the file. Never edit them only in the UI: if a quick UI fix is made, copy it back to the file in the same session.
 - Server Scripts run in Frappe's restricted sandbox (no imports, limited API). If a rule can't be done there, stop and explain. Don't work around it by putting files into the erpnext app.
 - Custom fields `satcom_*`; custom roles `Satcom *`; custom DocTypes, scripts, workflows, reports and print formats prefixed "Satcom". Master data that users see as ordinary words (item groups, item attributes, warehouses) keeps plain names.
 - Rerunning any installer must change nothing the second time.
@@ -228,7 +228,7 @@ Workspace **"Satcom Purchase & Stores"**: shortcuts to new Indent, PO, GRN, QC R
 | Concessions need approver sign-off | Off (stores decides) | Vijay / Dileep |
 | Tools bought/issued without a job code | Allowed (assumed) | Vijay / Dileep |
 | Stock valuation method | FIFO (as set today) | Management + accounts, before go-live |
-| Original logo file for the letterhead | Scan crop in `erpnext/assets/` | Rahul |
+| Original logo file for the letterhead | Scan crop in `assets/` | Rahul |
 | Label printer and size | 100 × 50 mm (existing) | Rahul |
 | Rack/bin locations (D10) | Not built | Stores |
 | Indent self-approval below a value | None | Management, once staff join |

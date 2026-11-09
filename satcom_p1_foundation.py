@@ -4,7 +4,7 @@ Run (after satcom_demo_cleanup.run):
     bench --site frontend execute erpnext.satcom_p1_foundation.run
 Each step compares before it writes and prints only what it changed, so a second run reports
 "0 changes". Built so far: 2.1 settings, 2.2 roles and demo users, 2.3 warehouses, 2.4 item codes, 2.5 job codes.
-Copy erpnext/server_scripts and erpnext/client_scripts to /tmp/satcom_scripts in the backend
+Copy server_scripts and client_scripts to /tmp/satcom_scripts in the backend
 container first (the installer reads the script sources from there).
 """
 import frappe

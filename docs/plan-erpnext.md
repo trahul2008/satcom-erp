@@ -2,9 +2,9 @@
 
 PLANNING.md item 9 points here (same pattern as `docs/plan-nextcloud.md`). Keep it up to date: tick items with a date when done.
 
-**Goal:** ERPNext v16 runs the factory's purchase, stores, production tracking with QR codes, QC, dispatch paperwork, warranty and asset register. Accounts and GST invoicing stay in Tally. Decisions come from management and are recorded in the "ERPNext Process Decisions" doc; each phase gets a spec (`erpnext/SPEC_PHASE<n>.md`) built only from recorded decisions.
+**Goal:** ERPNext v16 runs the factory's purchase, stores, production tracking with QR codes, QC, dispatch paperwork, warranty and asset register. Accounts and GST invoicing stay in Tally. Decisions come from management and are recorded in the "ERPNext Process Decisions" doc; each phase gets a spec (`SPEC_PHASE<n>.md`) built only from recorded decisions.
 
-**Where:** the 2026-10-13 demo VM `satcom-erp` on Server B (Docker, site `frontend`) becomes the real system. Build method: configuration as code (installer modules + Server/Client Scripts in `erpnext/`), no custom app. Rules: `erpnext/CLAUDE.md`.
+**Where:** the 2026-10-13 demo VM `satcom-erp` on Server B (Docker, site `frontend`) becomes the real system. Build method: configuration as code (installer modules + Server/Client Scripts in the repo root), no custom app. Rules: `CLAUDE.md`.
 
 ## Phase 0 — groundwork (before phase 1)
 - [x] Access check from the dev PC (2026-10-28): 9 containers up, ERPNext 16.50.0 / Frappe 16.51.0, site `frontend`, `server_script_enabled` = 1.
@@ -13,7 +13,7 @@ PLANNING.md item 9 points here (same pattern as `docs/plan-nextcloud.md`). Keep 
 - [x] `PLANNING.md` item 9 → this file (2026-10-28).
 
 ## Phase 1 — purchase, stores, QR labels, incoming QC
-Spec: `erpnext/SPEC_PHASE1.md`. Roles, warehouses, item code scheme, job codes (`J-26-0042`, `-01` extensions, `S-26-0007` stock builds), indents and POs with Vijay/Dileep approval, the Rs. 3 lakh quotation rule, GRN into Quality Hold, QR labels per piece / per lot, QC release, failed-material disposition, issues only against job codes, four reports.
+Spec: `SPEC_PHASE1.md`. Roles, warehouses, item code scheme, job codes (`J-26-0042`, `-01` extensions, `S-26-0007` stock builds), indents and POs with Vijay/Dileep approval, the Rs. 3 lakh quotation rule, GRN into Quality Hold, QR labels per piece / per lot, QC release, failed-material disposition, issues only against job codes, four reports.
 - [x] §1 demo cleanup (2026-10-28): `satcom_demo_cleanup.py`, 41 changes, rerun 0. Backups `D:\ERPNext-Backups\20261028_134403-pre-cleanup\` and `…135119-post-cleanup\`. Afterwards 0 GL / 0 stock ledger rows, Stock Balance empty.
 - [x] §2.1 settings (2026-10-28): `satcom_p1_foundation.py` switched perpetual inventory off and maintain-same-rate off (rerun 0 changes); valuation stays FIFO; `satcom_p1_check.verify` 11/11 PASS. Backup `…135203-pre-2.1\`.
 - [x] §2.2 roles (2026-10-30): roles `Satcom Approver`, `Satcom Indenter`; one Role Profile per Satcom role; 5 demo users; installer 12 changes, rerun 0; `verify` 24/24 PASS. Backup `…20261030_132537-pre-2.2\`.
@@ -91,19 +91,19 @@ Technical decisions (made within the spec, demo data only; Rahul delegated these
 ## Go-live readiness — before real data goes in (can run alongside phase 2)
 Server work under the root `CLAUDE.md`; reuse the Nextcloud patterns (`docs/plan-nextcloud.md`).
 - [x] **Backups (nightly, 2026-11-06):** off the VM and off Server B, onto Server A, the same way satcom-files' Borg backup reaches A. Still open: the 26 h staleness alert and the restore test (below).
-  - **Design.** systemd timer `satcom-erp-backup.timer` in the VM, 00:30 IST (outside 09:00-18:00, before Nextcloud's 02:00 run on the same A disk), runs `/usr/local/sbin/satcom-erp-backup` (source `erpnext/backup/satcom-erp-backup.sh`):
+  - **Design.** systemd timer `satcom-erp-backup.timer` in the VM, 00:30 IST (outside 09:00-18:00, before Nextcloud's 02:00 run on the same A disk), runs `/usr/local/sbin/satcom-erp-backup` (source `backup/satcom-erp-backup.sh`):
     1. `bench --site frontend backup --with-files` (database, public and private files, site config);
     2. copies the four files out of the container to `/var/backups/erpnext/<timestamp>/` with `SHA256SUMS` and a `gzip -t` of the dump; sets older than **14 days** are deleted there and in the container's `sites/frontend/private/backups`;
     3. `borg create` of that folder into `/mnt/erpbackup/borg` = `D:\ErpBackup\borg` on Server A (share `ErpBackup$`), zstd, then `borg prune --keep-within 30d` (**30 days** on A) and `borg compact`;
     4. one log line per run in `/var/log/satcom-erp-backup.log` and the journal (`OK <ts> set=… repo=… archives=… took=…` or `FAIL: <reason>`); last good run in `/var/backups/erpnext/LAST_SUCCESS`; the systemd unit fails on any error. No compose.yml change.
   - **On Server A** (`scripts/Set-ErpBackupShare.ps1`, copy of the Nextcloud pattern): local account `erpbackup` (random password, generated on A, never shown, `C:\ProgramData\satcom\erpbackup-smb.txt` + `erpbackup-cifs-cred`), `D:\ErpBackup` (SYSTEM, Administrators, erpbackup only), hidden share `ErpBackup$` with SMB encryption. Borg passphrase generated on A (`erpbackup-borg-pass.txt`) and the exported repo key (`erpbackup-borg-key.txt`), all SYSTEM + Administrators only. **No firewall change:** the VM reaches A as 192.168.1.86, already allowed by "Satcom Nextcloud backup (SMB from the VM only)"; when the VM moves to 192.168.1.91 that rule needs .91. Copy the passphrase and key into the password manager too (`type` them on A as admin): without both, archives can't be read.
-  - **In the VM** (`erpnext/backup/install-backup.sh`, `mount-backup.sh`): borgbackup + cifs-utils; `/root/.smb-erpbackup` and `/root/.borg-erp-pass` piped from A over SSH (root 0600, never on a command line); fstab CIFS mount `//192.168.1.85/ErpBackup$` on `/mnt/erpbackup` (SMB 3.1.1, seal); bare mount point immutable, so with A down the job fails instead of filling the VM disk; the job remounts a missing share itself.
+  - **In the VM** (`backup/install-backup.sh`, `mount-backup.sh`): borgbackup + cifs-utils; `/root/.smb-erpbackup` and `/root/.borg-erp-pass` piped from A over SSH (root 0600, never on a command line); fstab CIFS mount `//192.168.1.85/ErpBackup$` on `/mnt/erpbackup` (SMB 3.1.1, seal); bare mount point immutable, so with A down the job fails instead of filling the VM disk; the job remounts a missing share itself.
   - **Install / rerun:**
     ```
     # Server A (admin): scripts/Set-ErpBackupShare.ps1 -WhatIf, then without -WhatIf
     ssh satcom-a "type C:\ProgramData\satcom\erpbackup-cifs-cred" | ssh satcom-erp-nat "sudo sh -c 'umask 077; tr -d \"\r\" > /root/.smb-erpbackup'"
     ssh satcom-a "type C:\ProgramData\satcom\erpbackup-borg-pass.txt" | ssh satcom-erp-nat "sudo sh -c 'umask 077; tr -d \"\r\n\" > /root/.borg-erp-pass'"
-    # copy erpnext/backup/ to the VM, then: sudo bash install-backup.sh
+    # copy backup/ to the VM, then: sudo bash install-backup.sh
     sudo systemctl start satcom-erp-backup.service     # run now; sudo tail /var/log/satcom-erp-backup.log
     ```
   - **Rollback:** VM: `sudo systemctl disable --now satcom-erp-backup.timer; sudo rm /etc/systemd/system/satcom-erp-backup.{service,timer} /usr/local/sbin/satcom-erp-backup; sudo umount /mnt/erpbackup; sudo sed -i '\| /mnt/erpbackup cifs |d' /etc/fstab; sudo chattr -i /mnt/erpbackup; sudo rm /root/.smb-erpbackup /root/.borg-erp-pass /root/.borg-erp-key` (optionally `apt remove borgbackup`). A (admin): `Remove-SmbShare ErpBackup$ -Force; Remove-LocalUser erpbackup; Remove-Item C:\ProgramData\satcom\erpbackup-*` and, only if the archives are no longer wanted, `D:\ErpBackup`.

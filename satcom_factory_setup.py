@@ -2,7 +2,7 @@
 
 Installed into the backend container and run with:
     bench --site frontend execute erpnext.satcom_factory_setup.run
-(see erpnext/README.md). Everything is stock ERPNext: standard doctypes, standard settings,
+(see README.md). Everything is stock ERPNext: standard doctypes, standard settings,
 no custom app. Each step skips what already exists, so a rerun is safe.
 """
 import frappe

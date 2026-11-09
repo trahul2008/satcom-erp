@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+autoinstall/* text eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

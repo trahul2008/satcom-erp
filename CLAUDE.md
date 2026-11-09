@@ -1,11 +1,13 @@
-# ERPNext — rules for Claude (erpnext/ folder)
+# satcom-erp — rules for Claude
 
-Loaded on top of the root `CLAUDE.md` when you work in `erpnext/`. The root rules still apply; for anything on the Windows hosts (Hyper-V, nginx, port proxies, failover scripts) follow them and ask first.
+Satcom's ERPNext: configuration, phase specs and plans. Split out of `trahul2008/SatcomApp` on 2026-11-09 with its history; the workforce app and the Windows server scripts (failover, heartbeat, Nextcloud, alerting such as `Invoke-FilesHealth`) stay in SatcomApp. If a change needs something there, say so and stop: don't edit that repo from here.
 
-You're configuring ERPNext v16 for Satcom's factory. Business decisions are made by management and written into the phase spec (`erpnext/SPEC_PHASE<n>.md`) before they reach you. Implement them faithfully; never decide them. Roadmap and status: `docs/plan-erpnext.md`.
+**Infrastructure rules (carried over from SatcomApp):** production runs on two Windows Server 2022 hosts, Server A (192.168.1.85) and Server B (192.168.1.86); whichever holds `192.168.1.87` serves the workforce app. Anything that touches services, VMs, port proxies, firewall rules or failover on those hosts is live infrastructure: read the script's own help and ask Rahul before running or changing it. Never commit `.env` files, passwords, backups or `demo-credentials.txt`.
+
+You're configuring ERPNext v16 for Satcom's factory. Business decisions are made by management and written into the phase spec (`SPEC_PHASE<n>.md`) before they reach you. Implement them faithfully; never decide them. Roadmap and status: `docs/plan-erpnext.md`.
 
 ## Where it runs
-- VM `satcom-erp` on **Server B** (Hyper-V), 172.20.90.11 on `VM-NAT`. Built by `scripts/New-ErpVM.ps1` + `erpnext/provision.sh`. Demo build of 2026-10-13: **no replica, no nightly backup, no failover yet.**
+- VM `satcom-erp` on **Server B** (Hyper-V), 172.20.90.11 on `VM-NAT`. Built by `scripts/New-ErpVM.ps1` + `provision.sh`. Demo build of 2026-10-13 (now the real system). Nightly backup to Server A since 2026-11-06 (see `README.md`); **no replica, no failover yet.**
 - Docker compose in `/opt/erpnext` (stock `frappe/erpnext:v16.50.0`, MariaDB 11.8). Site name **`frontend`**. Passwords in `/opt/erpnext/.env` (root-only).
 - UI: `http://192.168.1.86:8081` from the office LAN (port proxy on B).
 - SSH: alias `satcom-erp-nat` (ProxyJump via B). Off the office LAN, B is reached over Tailscale; Tailscale is for access only, never make anything depend on it.
@@ -14,8 +16,8 @@ You're configuring ERPNext v16 for Satcom's factory. Business decisions are made
 - After restarting `backend`, restart `frontend` too (its nginx caches the backend IP → 502).
 
 ## How things are built: configuration as code
-- Everything is created by **idempotent installer modules in `erpnext/`**, each with `run()`. Running one twice must change nothing the second time.
-- Runtime logic lives in **Server Scripts and Client Scripts**. Their source lives in repo files (`erpnext/server_scripts/`, `erpnext/client_scripts/`) and the installer writes them into ERPNext. If anything is changed in the UI, copy it back to the file in the same session.
+- Everything is created by **idempotent installer modules in the repo root**, each with `run()`. Running one twice must change nothing the second time.
+- Runtime logic lives in **Server Scripts and Client Scripts**. Their source lives in repo files (`server_scripts/`, `client_scripts/`) and the installer writes them into ERPNext. If anything is changed in the UI, copy it back to the file in the same session.
 - **No custom app, no custom image, no files added to the erpnext app's code** beyond the temporary installer copies above. Server Scripts run in Frappe's restricted sandbox: if a rule can't be done there, stop and explain the options.
 - Names: custom fields `satcom_*`, roles `Satcom *`, other custom records start with "Satcom".
 
@@ -32,6 +34,6 @@ You're configuring ERPNext v16 for Satcom's factory. Business decisions are made
   2. run the phase check (`satcom_p<n>_check.verify`);
   3. tell Rahul in plain words what changed and where to see it in ERPNext;
   4. commit (clear message, e.g. `erpnext: indent approval workflow`), then `git pull --rebase` and push to the working branch `claude/erpnext-phase1-plan` (`git push origin HEAD:claude/erpnext-phase1-plan`). **Never push to main**; merging stays with Rahul;
-  5. update `erpnext/README.md` (how to run things) and `docs/plan-erpnext.md` (status, dated);
+  5. update `README.md` (how to run things) and `docs/plan-erpnext.md` (status, dated);
   6. wait for his OK before the next section.
-- Keep `erpnext/README.md` short and current. Put the history and decisions in `docs/plan-erpnext.md`.
+- Keep `README.md` short and current. Put the history and decisions in `docs/plan-erpnext.md`.

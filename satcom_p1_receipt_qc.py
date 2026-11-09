@@ -1,6 +1,6 @@
 """Phase 1 goods receipt and incoming QC for satcom-erp (SPEC_PHASE1.md section 5). Idempotent.
 
-Run after satcom_p1_foundation.run (copy erpnext/server_scripts and client_scripts to
+Run after satcom_p1_foundation.run (copy server_scripts and client_scripts to
 /tmp/satcom_scripts first):
     bench --site frontend execute erpnext.satcom_p1_receipt_qc.run
 Prints only what it changed; a second run reports "0 changes".

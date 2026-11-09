@@ -1,0 +1,21 @@
+# Secrets and backups: never commit
+.env
+.env.*
+!.env.example
+*.sql
+*.sql.gz
+*.tar
+*.tgz
+*-files.tar
+site_config*.json
+demo-credentials.txt
+backups/
+
+# Python / editor / OS
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

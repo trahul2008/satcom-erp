@@ -1,6 +1,6 @@
 """Phase 1 purchase for satcom-erp (SPEC_PHASE1.md sections 3-4). Idempotent.
 
-Run after satcom_p1_foundation.run (copy erpnext/server_scripts to /tmp/satcom_scripts first):
+Run after satcom_p1_foundation.run (copy server_scripts to /tmp/satcom_scripts first):
     bench --site frontend execute erpnext.satcom_p1_purchase.run
 Prints only what it changed; a second run reports "0 changes". Built so far: 3 indents.
 """
