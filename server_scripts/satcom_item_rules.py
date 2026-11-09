@@ -68,6 +68,10 @@ if doc.satcom_mpn:
 if problems:
     frappe.throw("<br>".join(problems), title="Item code rules")
 
+# --- incoming QC (5.2): items in Satcom groups get the starter template unless QC set another ------
+if prefix and not doc.quality_inspection_template and frappe.db.exists("Quality Inspection Template", "Standard checks"):
+    doc.quality_inspection_template = "Standard checks"
+
 # --- serial / batch series (templates carry none; variants get their own) -----------------------
 if not doc.has_variants:
     if doc.has_serial_no and not doc.serial_no_series:

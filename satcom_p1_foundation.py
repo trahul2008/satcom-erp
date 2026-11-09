@@ -73,6 +73,7 @@ DEMO_USERS = {
     "demo.approver2@example.com": ("Demo Approver 2", ["Satcom Approver"]),
     "demo.indenter@example.com": ("Demo Indenter", ["Satcom Indenter", "Satcom Purchase"]),
     "demo.stores@example.com": ("Demo Stores", ["Satcom Stores", "Satcom QC"]),
+    "demo.qc@example.com": ("Demo QC", ["Satcom QC"]),  # QC only (incoming QC, 5.2)
     "demo.allroles@example.com": ("Demo All Roles", list(ROLE_PROFILES)),
 }
 

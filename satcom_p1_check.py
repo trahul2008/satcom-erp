@@ -3,7 +3,7 @@
     bench --site frontend execute erpnext.satcom_p1_check.verify
 Prints PASS/FAIL per line and a summary. It grows with each section as it is built; the DEMO
 scenario (create_demo / cleanup, spec section 10) is added once the sections it needs exist.
-Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses, 2.4 item codes, 2.5 jobs, 3 indents.
+Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses, 2.4 item codes, 2.5 jobs, 3 indents, 5 receipt and QC.
     bench --site frontend execute erpnext.satcom_p1_check.create_demo   (writes DEMO records)
     bench --site frontend execute erpnext.satcom_p1_check.cleanup       (removes them)
 """
@@ -199,6 +199,184 @@ def _indent(title, job, item, qty=2):
                    "schedule_date": frappe.utils.add_days(frappe.utils.nowdate(), 7)}]})
 
 
+DEMO_SUPPLIER = "DEMO Supplier"
+QC_USER = "demo.qc@example.com"
+QH, REJECTED, STORES_WH, SCRAP_WH = "Quality Hold - STPL", "Rejected - STPL", "Stores - STPL", "Scrap - STPL"
+SERIES_KEY = "satcom_demo_series"
+
+
+def _file(doctype, name, file_name, text):
+    return frappe.get_doc({"doctype": "File", "file_name": file_name, "content": text, "is_private": 1,
+                           "attached_to_doctype": doctype, "attached_to_name": name}).insert()
+
+
+def _grn(rows, **over):
+    today = frappe.utils.nowdate()
+    values = {"doctype": "Purchase Receipt", "company": COMPANY, "supplier": DEMO_SUPPLIER, "posting_date": today,
+              "satcom_vendor_invoice_no": "DEMO-INV-0001", "satcom_vendor_invoice_date": today,
+              "satcom_vendor_dc_no": "DEMO-DC-0001", "satcom_vendor_dc_date": today,
+              "items": [{"item_code": i, "qty": q, "rate": 100, "project": j, "warehouse": w or QH} for i, q, j, w in rows]}
+    values.update(over)
+    return frappe.get_doc(values)
+
+
+def _transfer(rows, **over):
+    """rows: (item, qty, serial or None, batch or None, from, to)"""
+    values = {"doctype": "Stock Entry", "company": COMPANY, "stock_entry_type": "Material Transfer",
+              "items": [{"item_code": i, "qty": q, "s_warehouse": s, "t_warehouse": t, "use_serial_batch_fields": 1,
+                         "serial_no": sn, "batch_no": bn} for i, q, sn, bn, s, t in rows]}
+    values.update(over)
+    return frappe.get_doc(values)
+
+
+def _demo_receipt_qc(made, codes):
+    """Section 5: GRN into Quality Hold, Pending QC, QC release (accepted and rejected), the QC
+    release rules, and each disposition. Stores = demo.stores, QC = demo.qc."""
+    from erpnext.controllers.sales_and_purchase_return import make_return_doc
+    from erpnext.satcom_p1_receipt_qc import PENDING_QC_SQL
+
+    if not frappe.db.exists("Supplier", DEMO_SUPPLIER):
+        frappe.get_doc({"doctype": "Supplier", "supplier_name": DEMO_SUPPLIER, "supplier_group": "Raw Material",
+                        "supplier_type": "Company"}).insert()
+    con = frappe.get_doc({"doctype": "Item", "item_code": "CON", "item_name": "DEMO SMA connector",
+                          "item_group": "Connectors", "stock_uom": "Nos", "is_stock_item": 1,
+                          "description": "DEMO SMA connector", "satcom_mpn": "DEMO-CON-0001", "has_batch_no": 1}).insert()
+    codes["CON"] = con.name
+    rfc = codes["RFC"]
+    job_cert, job_stock = made[0], made[1]  # J: 100% inspection + certificates; S: stock build
+    print(f"item {con.name} (batch) qi_template={con.quality_inspection_template}; "
+          f"RF item {rfc} qi_template={frappe.db.get_value('Item', rfc, 'quality_inspection_template')}")
+
+    # 5.1 GRN (stores)
+    def blocks():
+        _expect_block("GRN row to Stores (not Quality Hold)", lambda: _grn([(rfc, 1, job_cert, STORES_WH)]).insert())
+        _expect_block("GRN row without a job (RF part)", lambda: _grn([(rfc, 1, None, None)]).insert())
+
+        def no_attachment():
+            return _grn([(rfc, 1, job_cert, None)]).insert().submit()
+        _expect_block("GRN submit without the invoice / DC scan", no_attachment)
+
+        def no_invoice():
+            pr = _grn([(rfc, 1, job_cert, None)], satcom_vendor_invoice_no="").insert()
+            _file("Purchase Receipt", pr.name, "DEMO-scan.txt", "DEMO scan")
+            return pr.submit()
+        _expect_block("GRN submit without the vendor invoice no", no_invoice)
+
+    _as(STORES, blocks)
+
+    def receive():
+        pr = _grn([(rfc, 4, job_cert, None), (con.name, 10, job_stock, None)]).insert()
+        _file("Purchase Receipt", pr.name, "DEMO-invoice-and-dc.txt", "DEMO invoice / DC scan")
+        pr.submit()
+        return pr.name
+    grn = _as(STORES, receive)
+    serials = frappe.get_all("Serial No", filters={"item_code": rfc}, fields=["name", "warehouse", "satcom_received_for_job"],
+                             order_by="name")
+    batches = frappe.get_all("Batch", filters={"item": con.name}, fields=["name", "satcom_received_for_job"])
+    print(f"GRN {grn} by {STORES}: serials {[(s.name, s.warehouse, s.satcom_received_for_job) for s in serials]}; "
+          f"batches {[(b.name, b.satcom_received_for_job) for b in batches]}")
+    pending = frappe.db.sql(PENDING_QC_SQL, as_dict=True)
+    print(f"Pending QC: {len(pending)} line(s): " + "; ".join(
+        f"{p['Serial / Batch:Data:180']} x{p['Qty:Float:70']} job {p['Job:Link/Project:110']} "
+        f"{p['Days Waiting:Int:100']} d" for p in pending))
+
+    # 5.2 QC release (QC user): 1 serial and the batch accepted, 3 serials rejected
+    s = [x.name for x in serials]
+    batch = batches[0].name
+
+    def release_draft():
+        se = _transfer([(rfc, 1, s[0], None, QH, STORES_WH), (rfc, 1, s[1], None, QH, REJECTED),
+                        (rfc, 1, s[2], None, QH, REJECTED), (rfc, 1, s[3], None, QH, REJECTED),
+                        (con.name, 10, None, batch, QH, STORES_WH)], stock_entry_type="QC Release").insert()
+        return se.name
+    se_name = _as(QC_USER, release_draft)
+    se = frappe.get_doc("Stock Entry", se_name)
+    print(f"QC release {se_name} draft by {QC_USER}: inspection_required={se.inspection_required} "
+          f"rows project={[r.project for r in se.items]}")
+    _as(QC_USER, lambda: _expect_block("QC release submitted without inspections",
+                                       lambda: frappe.get_doc("Stock Entry", se_name).submit()))
+
+    def inspect():
+        for row, status in zip(se.items, ["Accepted", "Rejected", "Rejected", "Rejected", "Accepted"]):
+            qi = frappe.get_doc({"doctype": "Quality Inspection", "inspection_type": "Outgoing",
+                                 "reference_type": "Stock Entry", "reference_name": se_name,
+                                 "child_row_reference": row.name, "item_code": row.item_code,
+                                 "item_serial_no": (row.serial_no or "").strip() or None, "batch_no": row.batch_no,
+                                 "sample_size": 1, "status": status, "manual_inspection": 1,
+                                 "inspected_by": QC_USER, "report_date": frappe.utils.nowdate(),
+                                 "remarks": "DEMO"}).insert()
+            qi.submit()
+            print(f"  QI {qi.name} {row.item_code} {row.serial_no or row.batch_no}: {status}, "
+                  f"level={qi.satcom_inspection_level}, sample={qi.sample_size}")
+    _as(APPROVER, lambda: _expect_block("non-QC user submits a Quality Inspection", lambda: frappe.get_doc({
+        "doctype": "Quality Inspection", "inspection_type": "Outgoing", "reference_type": "Stock Entry",
+        "reference_name": se_name, "item_code": rfc, "sample_size": 1, "status": "Accepted",
+        "inspected_by": APPROVER, "manual_inspection": 1}).insert().submit()))
+    _as(QC_USER, inspect)
+
+    def wrong_target():
+        doc = frappe.get_doc("Stock Entry", se_name)
+        doc.items[1].t_warehouse = STORES_WH  # rejected serial to Stores
+        doc.save()
+        return doc.submit()
+    _as(QC_USER, lambda: _expect_block("rejected row released to Stores", wrong_target))
+    _as(QC_USER, lambda: _expect_block("QC release for a job that needs certificates, none attached",
+                                       lambda: frappe.get_doc("Stock Entry", se_name).submit()))
+
+    def attach_cert():
+        pr = frappe.get_doc("Purchase Receipt", grn)
+        f = _file("Purchase Receipt", grn, "DEMO-test-certificate.txt", "DEMO test certificate")
+        for row in pr.items:
+            if row.item_code == rfc:
+                row.satcom_cert_attached = 1
+                row.satcom_cert_file = f.file_url
+        pr.save()
+    _as(STORES, attach_cert)
+    _as(QC_USER, lambda: frappe.get_doc("Stock Entry", se_name).submit())
+    print(f"QC release {se_name} submitted by {QC_USER}: " + ", ".join(
+        f"{n} -> {frappe.db.get_value('Serial No', n, 'warehouse')}" for n in s))
+
+    # 5.3 dispositions (stores)
+    def scrap(**over):
+        return _transfer([(rfc, 1, s[1], None, REJECTED, over.pop("to", SCRAP_WH))], **over).insert().submit()
+    _as(STORES, lambda: _expect_block("leaving Rejected without a disposition", lambda: scrap()))
+    _as(STORES, lambda: _expect_block("scrap without a reason", lambda: scrap(satcom_disposition="Scrap")))
+    _as(STORES, lambda: _expect_block("scrap sent to Stores", lambda: scrap(
+        satcom_disposition="Scrap", satcom_disposition_reason="DEMO", to=STORES_WH)))
+    _as(STORES, lambda: _expect_block("Return to Vendor as a stock entry", lambda: scrap(
+        satcom_disposition="Return to Vendor", satcom_disposition_reason="DEMO")))
+    _as(STORES, lambda: scrap(satcom_disposition="Scrap", satcom_disposition_reason="DEMO: connector pin bent"))
+    print(f"scrap: {s[1]} -> {frappe.db.get_value('Serial No', s[1], 'warehouse')}")
+
+    def concession(**over):
+        return _transfer([(rfc, 1, s[2], None, REJECTED, STORES_WH)], satcom_disposition="Use under Concession",
+                         satcom_disposition_reason="DEMO: cosmetic scratch, works", **over).insert().submit()
+    _as(STORES, lambda: _expect_block("stores sets Concession Approved By to an approver",
+                                      lambda: concession(satcom_concession_approved_by=APPROVER)))
+    _as(STORES, concession)
+    print(f"concession: {s[2]} -> {frappe.db.get_value('Serial No', s[2], 'warehouse')}")
+
+    def vendor_return(reason):
+        ret = make_return_doc("Purchase Receipt", grn)
+        ret.items = [r for r in ret.items if r.item_code == rfc]
+        r = ret.items[0]
+        r.qty = r.received_qty = -1
+        r.rejected_qty = 0
+        r.warehouse = REJECTED
+        r.use_serial_batch_fields = 1
+        r.serial_no = s[3]
+        r.serial_and_batch_bundle = None
+        ret.satcom_disposition_reason = reason
+        ret.insert()
+        ret.submit()
+        return ret
+    _as(STORES, lambda: _expect_block("return to vendor without a reason", lambda: vendor_return("")))
+    ret = _as(STORES, lambda: vendor_return("DEMO: wrong gain, supplier replaces"))
+    print(f"return to vendor {ret.name} ({ret.satcom_disposition}): {s[3]} -> "
+          f"{frappe.db.get_value('Serial No', s[3], 'warehouse') or 'gone (returned)'}")
+    print(f"Pending QC after release: {len(frappe.db.sql(PENDING_QC_SQL))} line(s)")
+
+
 def create_demo():
     """Build the DEMO records for what's been built so far (writes). Run cleanup() first to redo."""
     from frappe.model.workflow import apply_workflow
@@ -206,6 +384,7 @@ def create_demo():
     if frappe.get_all("Project", filters={"satcom_job_title": ["like", "DEMO%"]}, limit=1):
         frappe.throw("DEMO jobs exist; run cleanup first")
     today = frappe.utils.nowdate()
+    _snapshot_series()
 
     # 2.5 jobs (the Customer itself is made by the indenter: spec 2.5 lets indenters create customers)
     made = []
@@ -307,6 +486,8 @@ def create_demo():
         return mr.submit()
     _as(INDENTER, lambda: _expect_block("indenter submits a draft directly (bypass)", direct_submit))
     _as(STORES, lambda: _expect_block("stores submits a draft directly (bypass)", direct_submit))
+
+    _demo_receipt_qc(made, codes)
     frappe.db.commit()
 
 
@@ -325,55 +506,239 @@ def _restore_series(prefixes, table="tabProject"):
             print(f"counter {prefix}: {rows[0][0]} -> {used}")
 
 
+LEDGER_TABLES = ["Stock Ledger Entry", "GL Entry", "Payment Ledger Entry", "Repost Item Valuation",
+                 "Stock Reservation Entry"]
+
+
+def _purge_voucher(voucher_type, voucher_no):
+    """Remove a cancelled DEMO voucher's ledger rows and serial-and-batch bundles (demo data only:
+    v16 keeps them as live links that block deleting the items, serials and batches). Returns the
+    purged Stock Ledger Entry names (their counter is restored with the others)."""
+    sles = frappe.get_all("Stock Ledger Entry", filters={"voucher_type": voucher_type, "voucher_no": voucher_no},
+                          pluck="name")
+    for dt in LEDGER_TABLES:
+        frappe.db.delete(dt, {"voucher_type": voucher_type, "voucher_no": voucher_no})
+    for b in frappe.get_all("Serial and Batch Bundle", filters={"voucher_type": voucher_type, "voucher_no": voucher_no},
+                            pluck="name"):
+        frappe.db.delete("Serial and Batch Entry", {"parent": b})
+        frappe.db.delete("Serial and Batch Bundle", {"name": b})
+    return sles
+
+
+def _snapshot_series():
+    import json
+    if frappe.db.get_default(SERIES_KEY):
+        frappe.throw("a DEMO counter snapshot exists; run cleanup first")
+    frappe.db.set_default(SERIES_KEY, json.dumps(dict(frappe.db.sql("select name, current from tabSeries"))))
+
+
+def _restore_counters(deleted):
+    """Put the naming counters the demo used back to their value before create_demo (counters the
+    demo made go). Only counters of records cleanup deleted ({doctype: [names]}) are touched, and
+    never below a number still in use: other counters can move while the demo is on the site
+    (ERPNext's nightly BOM Update Log did on 9 Nov), and lowering those would reuse a live name."""
+    import json
+    raw = frappe.db.get_default(SERIES_KEY)
+    if not raw:
+        return False
+    before = json.loads(raw)
+    demo_prefixes = {}
+    for dt, names in deleted.items():
+        for n in names:
+            demo_prefixes[n.rstrip("0123456789")] = dt
+    for name, current in frappe.db.sql("select name, current from tabSeries"):
+        if name not in demo_prefixes:
+            if current != before.get(name):
+                print(f"counter {name}: {before.get(name)} -> {current} left alone (not a demo record's series)")
+            continue
+        in_use = frappe.db.sql(
+            f"select max(cast(substring(name, %s) as unsigned)) from `tab{demo_prefixes[name]}`"
+            " where name like %s and substring(name, %s) regexp '^[0-9]+$'",
+            (len(name) + 1, name + "%", len(name) + 1))[0][0] or 0
+        target = max(before.get(name) or 0, in_use)
+        if name not in before and not in_use:
+            frappe.db.sql("delete from tabSeries where name=%s", name)
+            print(f"counter {name}: {current} -> removed (made by the demo)")
+        elif current != target:
+            frappe.db.sql("update tabSeries set current=%s where name=%s", (target, name))
+            print(f"counter {name}: {current} -> {target}")
+    frappe.db.set_default(SERIES_KEY, "")
+    return True
+
+
 def cleanup():
-    """Remove DEMO test records (writes): DEMO indents, items whose name or MPN starts with DEMO,
-    DEMO jobs and the DEMO customer, with their notifications and Deleted Document rows. Counters go
-    back to the highest number still in use, so test runs don't use up real numbers."""
-    # DEMO indents: titled DEMO, or for a DEMO job, or holding a DEMO item (forms title them themselves)
+    """Remove DEMO test records (writes): GRNs, returns, QC releases, dispositions and inspections of
+    DEMO items (cancelled, then their ledger rows purged), DEMO indents, items (with their serials and
+    batches), jobs, the DEMO customer and supplier, with notifications, files and Deleted Document
+    rows. Counters go back to their values before create_demo."""
+    demo_items = sorted({i.name for i in frappe.get_all("Item", filters={"item_name": ["like", "DEMO%"]}, fields=["name"])}
+                        | {i.name for i in frappe.get_all("Item", filters={"satcom_mpn": ["like", "DEMO%"]}, fields=["name"])})
     demo_jobs = frappe.get_all("Project", filters={"satcom_job_title": ["like", "DEMO%"]}, pluck="name")
-    demo_items = frappe.get_all("Item", filters={"item_name": ["like", "DEMO%"]}, pluck="name")
+    deleted = {}
+
+    def parents(child_dt, field="item_code"):
+        if not demo_items:
+            return []
+        return sorted(set(frappe.get_all(child_dt, filters={field: ["in", demo_items]}, pluck="parent")), reverse=True)
+
+    reposts_before = set(frappe.get_all("Repost Item Valuation", pluck="name"))
+    purged_sles = []
+    # stock documents, newest first: returns and dispositions before the QC release, inspections,
+    # then the receipts
+    stock = [("Stock Entry", n) for n in parents("Stock Entry Detail")]
+    receipts = parents("Purchase Receipt Item")
+    returns = [n for n in receipts if frappe.db.get_value("Purchase Receipt", n, "is_return")]
+    stock = [("Purchase Receipt", n) for n in returns] + stock
+    inspections = frappe.get_all("Quality Inspection", filters={"item_code": ["in", demo_items or [""]]}, pluck="name")
+    stock += [("Quality Inspection", n) for n in inspections]
+    stock += [("Purchase Receipt", n) for n in receipts if n not in returns]
+    for dt, name in stock:
+        doc = frappe.get_doc(dt, name)
+        if doc.docstatus == 1:
+            doc.flags.ignore_links = True
+            doc.ignore_linked_doctypes = ("Quality Inspection", "Serial and Batch Bundle", "Stock Ledger Entry",
+                                          "Repost Item Valuation", "Purchase Receipt", "Stock Entry")
+            doc.cancel()
+    for dt, name in stock:
+        if dt != "Quality Inspection":
+            purged_sles.extend(_purge_voucher(dt, name))
+        frappe.db.delete("File", {"attached_to_doctype": dt, "attached_to_name": name})
+        frappe.delete_doc(dt, name, force=1)
+        deleted.setdefault(dt, []).append(name)
+        print(f"deleted {dt} {name}")
+    new_reposts = [r for r in frappe.get_all("Repost Item Valuation", fields=["name", "item_code"])
+                   if r.name not in reposts_before and r.item_code in demo_items]
+    if new_reposts:
+        frappe.db.delete("Repost Item Valuation", {"name": ["in", [r.name for r in new_reposts]]})
+        print(f"purged {len(new_reposts)} Repost Item Valuation row(s) queued by the cancels")
+
+    # indents
     names = set(frappe.get_all("Material Request", filters={"title": ["like", "DEMO%"]}, pluck="name"))
     if demo_jobs:
         names |= set(frappe.get_all("Material Request", filters={"satcom_job": ["in", demo_jobs]}, pluck="name"))
-    if demo_items:
-        names |= set(frappe.get_all("Material Request Item", filters={"item_code": ["in", demo_items]},
-                                    pluck="parent"))
-    indents = frappe.get_all("Material Request", filters={"name": ["in", list(names) or [""]]},
-                             fields=["name", "docstatus"], order_by="name desc")
-    for mr in indents:
+    names |= set(parents("Material Request Item"))
+    for mr in frappe.get_all("Material Request", filters={"name": ["in", list(names) or [""]]},
+                             fields=["name", "docstatus"], order_by="name desc"):
         if mr.docstatus == 1:
             frappe.db.set_value("Material Request", mr.name, "satcom_cancel_reason", "DEMO cleanup")
             frappe.get_doc("Material Request", mr.name).cancel()
         for dt, field in (("Workflow Action", "reference_name"), ("Notification Log", "document_name")):
             frappe.db.delete(dt, {field: mr.name})
         frappe.delete_doc("Material Request", mr.name)
+        deleted.setdefault("Material Request", []).append(mr.name)
         print(f"deleted Material Request {mr.name}")
-    items = sorted({i.name for i in frappe.get_all("Item", filters={"item_name": ["like", "DEMO%"]}, fields=["name"])}
-                   | {i.name for i in frappe.get_all("Item", filters={"satcom_mpn": ["like", "DEMO%"]}, fields=["name"])})
+
+    # serials, batches, items
+    for dt, field in (("Serial No", "item_code"), ("Batch", "item")):
+        for name in frappe.get_all(dt, filters={field: ["in", demo_items or [""]]}, pluck="name"):
+            frappe.delete_doc(dt, name, force=1)
+            deleted.setdefault(dt, []).append(name)
+        if deleted.get(dt):
+            print(f"deleted {len(deleted[dt])} {dt}")
+    for name in demo_items:
+        frappe.delete_doc("Item", name)
+        deleted.setdefault("Item", []).append(name)
+        print(f"deleted Item {name}")
+
     jobs = frappe.get_all("Project", filters={"satcom_job_title": ["like", "DEMO%"]},
                           fields=["name", "satcom_job_type"], order_by="name desc")
     jobs.sort(key=lambda j: j.satcom_job_type != "Extension")  # extensions before their parents
-    deleted = {"Material Request": [m.name for m in indents], "Item": items,
-               "Project": [j.name for j in jobs], "Customer": []}
-    for name in items:
-        frappe.delete_doc("Item", name)
-        print(f"deleted Item {name}")
     for j in jobs:
         frappe.delete_doc("Project", j.name)
+        deleted.setdefault("Project", []).append(j.name)
         print(f"deleted Project {j.name}")
-    if frappe.db.exists("Customer", DEMO_CUSTOMER):
-        frappe.delete_doc("Customer", DEMO_CUSTOMER)
-        deleted["Customer"].append(DEMO_CUSTOMER)
-        print(f"deleted Customer {DEMO_CUSTOMER}")
+    for dt, name in (("Customer", DEMO_CUSTOMER), ("Supplier", DEMO_SUPPLIER)):
+        if frappe.db.exists(dt, name):
+            frappe.delete_doc(dt, name)
+            deleted.setdefault(dt, []).append(name)
+            print(f"deleted {dt} {name}")
     for dt, names in deleted.items():
-        if names:
-            frappe.db.delete("Deleted Document", {"deleted_doctype": dt, "deleted_name": ["in", names]})
-    yy = frappe.utils.nowdate()[2:4]
-    _restore_series([f"J-{yy}-", f"S-{yy}-"] + [j.name + "-" for j in jobs])
-    _restore_series([f"MAT-MR-{frappe.utils.nowdate()[:4]}-"], table="tabMaterial Request")
+        frappe.db.delete("Deleted Document", {"deleted_doctype": dt, "deleted_name": ["in", names]})
+    if not _restore_counters({**deleted, "Stock Ledger Entry": purged_sles}):  # else: demo predates the snapshot
+        yy = frappe.utils.nowdate()[2:4]
+        _restore_series([f"J-{yy}-", f"S-{yy}-"] + [j.name + "-" for j in jobs])
+        _restore_series([f"MAT-MR-{frappe.utils.nowdate()[:4]}-"], table="tabMaterial Request")
     frappe.db.commit()
-    print(f"cleanup: {len(indents)} indent(s), {len(items)} item(s), {len(jobs)} job(s), "
-          f"{len(deleted['Customer'])} customer(s)")
+    print("cleanup: " + ", ".join(f"{len(v)} {k}" for k, v in deleted.items()))
+
+
+def _section_5_receipt_qc():
+    from erpnext.satcom_p1_receipt_qc import DISPOSITIONS, PENDING_QC_REPORT, QC_RELEASE_TYPE, QI_PARAMETERS, QI_TEMPLATE
+
+    pr = frappe.get_meta("Purchase Receipt")
+    _check("5.1 GRN vendor invoice / DC fields",
+           all(pr.has_field(fn) for fn in ("satcom_vendor_invoice_no", "satcom_vendor_invoice_date",
+                                           "satcom_vendor_dc_no", "satcom_vendor_dc_date")))
+    pri = frappe.get_meta("Purchase Receipt Item")
+    _check("5.1 GRN row certificate fields (editable after submit)",
+           pri.has_field("satcom_cert_attached") and pri.get_field("satcom_cert_file").allow_on_submit)
+    _check("5.1 Serial No and Batch record the job received for",
+           frappe.get_meta("Serial No").has_field("satcom_received_for_job")
+           and frappe.get_meta("Batch").has_field("satcom_received_for_job"))
+    _check("5.1 GRN without a PO allowed until 4 is live (Purchase Order Required = No)",
+           frappe.db.get_single_value("Buying Settings", "po_required") == "No")
+    for name, dt, event in (("Satcom GRN - rules", "Purchase Receipt", "Before Save"),
+                            ("Satcom GRN - submit guard", "Purchase Receipt", "Before Submit"),
+                            ("Satcom GRN - job on serials and batches", "Purchase Receipt", "After Submit"),
+                            ("Satcom Quality Inspection - level", "Quality Inspection", "Before Save"),
+                            ("Satcom Serial No - job from GRN", "Serial No", "Before Save"),
+                            ("Satcom Batch - job from GRN", "Batch", "Before Save"),
+                            ("Satcom Stock Entry - rules", "Stock Entry", "Before Save"),
+                            ("Satcom QC release - rules", "Stock Entry", "Before Submit")):
+        sc = frappe.db.get_value("Server Script", name, ["disabled", "doctype_event", "reference_doctype"], as_dict=True)
+        _check(f"5 server script {name}", sc and not sc.disabled and sc.doctype_event == event
+               and sc.reference_doctype == dt, sc)
+    ss = frappe.get_single("Stock Settings")
+    _check("5.2 QI rejected action Warn, not submitted Stop",
+           ss.action_if_quality_inspection_is_rejected == "Warn"
+           and ss.action_if_quality_inspection_is_not_submitted == "Stop")
+    params = frappe.get_all("Item Quality Inspection Parameter", filters={"parent": QI_TEMPLATE}, pluck="specification")
+    _check(f"5.2 template {QI_TEMPLATE} has the starter checks", set(QI_PARAMETERS) <= set(params), params)
+    groups = frappe.get_all("Item Group", filters={"satcom_prefix": ["is", "set"]}, pluck="name")
+    missing = frappe.get_all("Item", filters={"item_group": ["in", groups], "quality_inspection_template": ["is", "not set"]},
+                             pluck="name")
+    _check(f"5.2 every Satcom item has a QI template", not missing, missing)
+    for user, can in ((QC_USER, True), (STORES, True), (APPROVER, False), (INDENTER, False)):
+        has = bool(frappe.has_permission("Quality Inspection", "submit", user=user))
+        _check(f"5.2 {user} {'can' if can else 'cannot'} submit Quality Inspections", has == can, has)
+    _check(f"5.2 Stock Entry Type {QC_RELEASE_TYPE}",
+           frappe.db.get_value("Stock Entry Type", QC_RELEASE_TYPE, "purpose") == "Material Transfer")
+    _check(f"5.2 report {PENDING_QC_REPORT}", frappe.db.get_value("Report", PENDING_QC_REPORT, "report_type") == "Query Report")
+    opts = (frappe.get_meta("Stock Entry").get_field("satcom_disposition").options or "").split("\n")[1:]
+    _check("5.3 Stock Entry disposition options", opts == DISPOSITIONS, opts)
+
+    grns = frappe.get_all("Purchase Receipt", filters={"supplier": DEMO_SUPPLIER, "is_return": 0, "docstatus": 1},
+                          pluck="name")
+    if grns:
+        rfc = frappe.db.get_value("Item", {"item_name": "DEMO RF amplifier"}, "name")
+        sn = frappe.get_all("Serial No", filters={"item_code": rfc}, fields=["name", "warehouse", "satcom_received_for_job"],
+                            order_by="name")
+        _check("5 demo serials: accepted -> Stores, scrapped -> Scrap, concession -> Stores, returned -> gone",
+               [x.warehouse for x in sn] == [STORES_WH, SCRAP_WH, STORES_WH, None], [(x.name, x.warehouse) for x in sn])
+        _check("5 demo serials record the job they were received for",
+               {x.satcom_received_for_job for x in sn} == {DEMO_JOBS and frappe.db.get_value(
+                   "Project", {"satcom_job_title": DEMO_JOBS[0][0]}, "name")})
+        con = frappe.db.get_value("Item", {"item_name": "DEMO SMA connector"}, "name")
+        b = frappe.get_all("Batch", filters={"item": con}, fields=["name", "satcom_received_for_job"])
+        _check("5 demo batch records its stock build job", b and b[0].satcom_received_for_job == frappe.db.get_value(
+            "Project", {"satcom_job_title": DEMO_JOBS[1][0]}, "name"), b)
+        qis = frappe.get_all("Quality Inspection", filters={"item_code": ["in", [rfc, con]], "docstatus": 1},
+                             fields=["status", "satcom_inspection_level", "item_code"])
+        _check("5 demo inspections: 2 accepted, 3 rejected; job level 100% on the RF part, Standard on the stock build",
+               sorted(q.status for q in qis) == ["Accepted", "Accepted", "Rejected", "Rejected", "Rejected"]
+               and {q.satcom_inspection_level for q in qis if q.item_code == rfc} == {"100% inspection"}
+               and {q.satcom_inspection_level for q in qis if q.item_code == con} == {"Standard checks"}, qis)
+        rets = frappe.get_all("Purchase Receipt", filters={"supplier": DEMO_SUPPLIER, "is_return": 1, "docstatus": 1},
+                              fields=["satcom_disposition", "satcom_disposition_reason"])
+        _check("5.3 demo return to vendor records disposition and reason",
+               rets and rets[0].satcom_disposition == "Return to Vendor" and rets[0].satcom_disposition_reason, rets)
+        disp = frappe.get_all("Stock Entry", filters={"satcom_disposition": ["in", ["Scrap", "Use under Concession"]],
+                                                     "docstatus": 1}, fields=["satcom_disposition", "satcom_disposition_reason"])
+        _check("5.3 demo scrap and concession entries with reasons",
+               sorted(d.satcom_disposition for d in disp) == ["Scrap", "Use under Concession"]
+               and all(d.satcom_disposition_reason for d in disp), disp)
+        from erpnext.satcom_p1_receipt_qc import PENDING_QC_SQL
+        _check("5.2 Pending QC empty after the release", not frappe.db.sql(PENDING_QC_SQL))
 
 
 def _section_3_indents():
@@ -445,5 +810,6 @@ def verify():
     _section_2_4_items()
     _section_2_5_jobs()
     _section_3_indents()
+    _section_5_receipt_qc()
     failed = _results.count(False)
     print(f"{len(_results) - failed}/{len(_results)} PASS" + (f", {failed} FAIL" if failed else ""))
