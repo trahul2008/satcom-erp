@@ -5,7 +5,8 @@ Run after satcom_p1_foundation.run (copy server_scripts and client_scripts to
     bench --site frontend execute erpnext.satcom_p1_receipt_qc.run
 Prints only what it changed; a second run reports "0 changes".
 Interim (decision 6 Nov, QC before section 4): a GRN may be made without a PO; Buying Settings
-"Purchase Order Required" stays No until section 4 goes live and switches it to Yes.
+"Purchase Order Required" stays No until section 4 goes live and switches it to Yes
+(satcom_p1_purchase_orders.go_live).
 """
 import frappe
 

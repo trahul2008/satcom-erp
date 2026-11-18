@@ -3,7 +3,8 @@
     bench --site frontend execute erpnext.satcom_p1_check.verify
 Prints PASS/FAIL per line and a summary. It grows with each section as it is built; the DEMO
 scenario (create_demo / cleanup, spec section 10) is added once the sections it needs exist.
-Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses, 2.4 item codes, 2.5 jobs, 3 indents, 5 receipt and QC.
+Built so far: 1 demo cleanup, 2.1 settings, 2.2 roles, 2.3 warehouses, 2.4 item codes, 2.5 jobs, 3 indents,
+4 quotations and purchase orders, 5 receipt and QC.
     bench --site frontend execute erpnext.satcom_p1_check.create_demo   (writes DEMO records)
     bench --site frontend execute erpnext.satcom_p1_check.cleanup       (removes them)
 """
@@ -40,7 +41,7 @@ def _section_2_1_settings():
     _check("2.1 valuation method FIFO (open item)", v == "FIFO", v)
     bs = frappe.get_single("Buying Settings")
     _check("2.1 suppliers named by supplier name", bs.supp_master_name == "Supplier Name", bs.supp_master_name)
-    _check("2.1 PO not required for receipt", bs.po_required == "No", bs.po_required)
+    # "Purchase Order Required" is checked in section 4 (Yes once section 4 is live, spec 5.1)
     _check("2.1 Purchase Receipt not required", bs.pr_required == "No", bs.pr_required)
     _check("2.1 maintain same rate off", not bs.maintain_same_rate, bs.maintain_same_rate)
 
@@ -229,15 +230,181 @@ def _transfer(rows, **over):
     return frappe.get_doc(values)
 
 
+# Section 4 demo: three suppliers to quote; every DEMO PO carries a label in Order Confirmation No
+DEMO_SUPPLIERS = [DEMO_SUPPLIER, "DEMO Supplier 2", "DEMO Supplier 3"]
+PO_LABEL = "order_confirmation_no"
+
+
+def _demo_suppliers():
+    for name in DEMO_SUPPLIERS:
+        if not frappe.db.exists("Supplier", name):
+            frappe.get_doc({"doctype": "Supplier", "supplier_name": name, "supplier_group": "Raw Material",
+                            "supplier_type": "Company"}).insert()
+
+
+def _quotation(supplier, item, qty, rate):
+    today = frappe.utils.nowdate()
+    return frappe.get_doc({"doctype": "Supplier Quotation", "company": COMPANY, "supplier": supplier,
+                           "transaction_date": today, "valid_till": frappe.utils.add_days(today, 30),
+                           "items": [{"item_code": item, "qty": qty, "rate": rate}]})
+
+
+def _po(label, rows, quotations=(), **over):
+    """rows: (item, qty, rate, job). Rows go to Quality Hold, so the GRN made from the PO lands there."""
+    today = frappe.utils.nowdate()
+    due = frappe.utils.add_days(today, 7)
+    values = {"doctype": "Purchase Order", "company": COMPANY, "supplier": DEMO_SUPPLIER, "transaction_date": today,
+              "schedule_date": due, PO_LABEL: label,
+              "items": [{"item_code": i, "qty": q, "rate": r, "project": j, "schedule_date": due, "warehouse": QH}
+                        for i, q, r, j in rows],
+              "satcom_quotations": [{"supplier_quotation": q} for q in quotations]}
+    values.update(over)
+    return frappe.get_doc(values)
+
+
+def _raise_po(user, label, rows, quotations=(), **over):
+    """Insert a DEMO PO as `user` and send it for approval; returns its name."""
+    from frappe.model.workflow import apply_workflow
+
+    def go():
+        po = _po(label, rows, quotations, **over).insert()
+        return apply_workflow(po, "Submit for Approval").name
+    name = _as(user, go)
+    print(f"PO {name} '{label}' by {user}: {frappe.db.get_value('Purchase Order', name, 'workflow_state')}, "
+          f"net {frappe.db.get_value('Purchase Order', name, 'base_net_total')}")
+    return name
+
+
+def _approve_po(name, user=None):
+    from frappe.model.workflow import apply_workflow
+
+    _as(user or APPROVER, lambda: apply_workflow(frappe.get_doc("Purchase Order", name), "Approve"))
+    print(f"PO {name} approved by {user or APPROVER}: "
+          f"{frappe.db.get_value('Purchase Order', name, ['workflow_state', 'docstatus'])}")
+
+
+def _demo_purchase_orders(made, codes, indent):
+    """Section 4 (spec 10.4): the quotation rule at Rs 4,00,000 (too few quotations, the same
+    supplier twice, a draft quotation, three suppliers, an approver's waiver), a Rs 50,000 tools PO
+    with no job and no quotations, the approval workflow (reject with a reason, no self approval,
+    no direct submit), the job rule, and a PO made from the approved indent. Purchase = demo.indenter."""
+    from erpnext.stock.doctype.material_request.material_request import make_purchase_order
+    from frappe.model.workflow import apply_workflow
+
+    rfc, tol, job = codes["RFC"], codes["TOL"], made[0]
+    big = [(rfc, 4, 100000, job)]  # Rs 4,00,000 net
+    _demo_suppliers()
+
+    def quotes():
+        out = []
+        for supplier in [*DEMO_SUPPLIERS, DEMO_SUPPLIER]:  # the 4th: a second quotation from supplier 1
+            q = _quotation(supplier, rfc, 4, 100000).insert()
+            q.submit()
+            out.append(q.name)
+        out.append(_quotation(DEMO_SUPPLIERS[2], rfc, 4, 100000).insert().name)  # the 5th stays a draft
+        return out
+    q = _as(INDENTER, quotes)
+    print(f"supplier quotations by {INDENTER}: " + ", ".join(
+        f"{n} ({frappe.db.get_value('Supplier Quotation', n, 'supplier')}, "
+        f"docstatus {frappe.db.get_value('Supplier Quotation', n, 'docstatus')})" for n in q))
+    print(f"Satcom Settings: threshold {frappe.db.get_single_value('Satcom Settings', 'quotation_threshold')}, "
+          f"min {frappe.db.get_single_value('Satcom Settings', 'min_quotations')}, "
+          f"basis {frappe.db.get_single_value('Satcom Settings', 'threshold_basis')}")
+
+    # 4.2 job rule and the bypass
+    _as(INDENTER, lambda: _expect_block("PO row without a job (RF part)", lambda: _po(
+        "DEMO try", [(rfc, 1, 100, None)]).insert()))
+    _as(INDENTER, lambda: _expect_block("purchase submits a draft PO directly (bypass)", lambda: _po(
+        "DEMO try", [(rfc, 1, 100, job)]).insert().submit()))
+    _as(INDENTER, lambda: _expect_block("non-approver waives the quotation rule", lambda: _po(
+        "DEMO try", big, [q[0]], satcom_quote_waived=1, satcom_waiver_reason="DEMO").insert()))
+
+    # 4.1 Rs 4,00,000 with two quotations: blocked, then rejected with a reason
+    a = _raise_po(INDENTER, "DEMO-4L-2Q", big, [q[0], q[1]])
+    _as(APPROVER, lambda: _expect_block("Rs 4,00,000 PO with 2 quotations approved", lambda: apply_workflow(
+        frappe.get_doc("Purchase Order", a), "Approve")))
+    _as(APPROVER, lambda: _expect_block("PO rejected without a reason", lambda: apply_workflow(
+        frappe.get_doc("Purchase Order", a), "Reject")))
+
+    def reject_with_reason():
+        doc = frappe.get_doc("Purchase Order", a)
+        doc.satcom_rejection_reason = "DEMO: only two quotations"
+        doc.save()
+        return apply_workflow(frappe.get_doc("Purchase Order", a), "Reject")
+    _as(APPROVER, reject_with_reason)
+    print(f"PO {a} rejected by {APPROVER}: {frappe.db.get_value('Purchase Order', a, 'workflow_state')}")
+
+    # three submitted quotations but only two suppliers, plus a draft from the third: still blocked
+    b = _raise_po(INDENTER, "DEMO-4L-SAME", big, [q[0], q[3], q[1], q[4]])
+    sup = frappe.get_all("Satcom PO Quotation", filters={"parent": b}, pluck="supplier", order_by="idx")
+    print(f"PO {b} quotation rows, supplier filled in: {sup}")
+    _as(APPROVER, lambda: _expect_block("Rs 4,00,000 PO with 3 quotations from 2 suppliers and a draft approved",
+                                        lambda: apply_workflow(frappe.get_doc("Purchase Order", b), "Approve")))
+
+    # three different suppliers: passes
+    c = _raise_po(INDENTER, "DEMO-4L-3Q", big, [q[0], q[1], q[2]])
+    _as(INDENTER, lambda: _expect_block("purchase approves a PO", lambda: apply_workflow(
+        frappe.get_doc("Purchase Order", c), "Approve")))
+    _approve_po(c)
+
+    # one quotation, waived by the approver with a reason: passes
+    d = _raise_po(INDENTER, "DEMO-4L-WAIVED", big, [q[0]])
+
+    def waive(reason):
+        doc = frappe.get_doc("Purchase Order", d)
+        doc.satcom_quote_waived = 1
+        doc.satcom_waiver_reason = reason
+        return doc.save()
+    _as(APPROVER, lambda: _expect_block("waiver without a reason", lambda: waive("")))
+    _as(APPROVER, lambda: waive("DEMO: single-source part"))
+    _approve_po(d)
+
+    # Rs 50,000 of tools: no job, no quotations
+    e = _raise_po(INDENTER, "DEMO-50K-TOOLS", [(tol, 1, 50000, None)])
+    _approve_po(e, APPROVER_2)
+
+    # no self approval
+    s = _raise_po(ALL_ROLES, "DEMO-SELF", [(rfc, 1, 100, job)])
+    _as(ALL_ROLES, lambda: _expect_block("approver approves own PO", lambda: apply_workflow(
+        frappe.get_doc("Purchase Order", s), "Approve")))
+    _as(ALL_ROLES, lambda: _expect_block("approver submits own PO directly", lambda: frappe.get_doc(
+        "Purchase Order", s).submit()))
+
+    # the job flows from the approved indent's rows
+    def from_indent():
+        po = make_purchase_order(indent)
+        po.supplier = DEMO_SUPPLIER
+        po.set(PO_LABEL, "DEMO-FROM-INDENT")
+        for row in po.items:
+            row.rate = 100
+        po.insert()
+        return apply_workflow(po, "Submit for Approval").name
+    g = _as(INDENTER, from_indent)
+    _approve_po(g)
+    print(f"PO {g} from indent {indent}: rows project="
+          f"{frappe.get_all('Purchase Order Item', filters={'parent': g}, pluck='project')}, delivery address "
+          f"{frappe.db.get_value('Purchase Order', g, 'shipping_address')}")
+
+
+def _grn_from_po(po, **over):
+    """The GRN stores makes from an approved PO (Create > Purchase Receipt), vendor documents filled in."""
+    from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
+
+    today = frappe.utils.nowdate()
+    pr = make_purchase_receipt(po)
+    pr.update({"posting_date": today, "satcom_vendor_invoice_no": "DEMO-INV-0001", "satcom_vendor_invoice_date": today,
+               "satcom_vendor_dc_no": "DEMO-DC-0001", "satcom_vendor_dc_date": today})
+    pr.update(over)
+    return pr
+
+
 def _demo_receipt_qc(made, codes):
-    """Section 5: GRN into Quality Hold, Pending QC, QC release (accepted and rejected), the QC
-    release rules, and each disposition. Stores = demo.stores, QC = demo.qc."""
+    """Section 5: GRN from an approved PO into Quality Hold, Pending QC, QC release (accepted and
+    rejected), the QC release rules, and each disposition. Stores = demo.stores, QC = demo.qc."""
     from erpnext.controllers.sales_and_purchase_return import make_return_doc
     from erpnext.satcom_p1_receipt_qc import PENDING_QC_SQL
 
-    if not frappe.db.exists("Supplier", DEMO_SUPPLIER):
-        frappe.get_doc({"doctype": "Supplier", "supplier_name": DEMO_SUPPLIER, "supplier_group": "Raw Material",
-                        "supplier_type": "Company"}).insert()
+    _demo_suppliers()
     con = frappe.get_doc({"doctype": "Item", "item_code": "CON", "item_name": "DEMO SMA connector",
                           "item_group": "Connectors", "stock_uom": "Nos", "is_stock_item": 1,
                           "description": "DEMO SMA connector", "satcom_mpn": "DEMO-CON-0001", "has_batch_no": 1}).insert()
@@ -247,17 +414,29 @@ def _demo_receipt_qc(made, codes):
     print(f"item {con.name} (batch) qi_template={con.quality_inspection_template}; "
           f"RF item {rfc} qi_template={frappe.db.get_value('Item', rfc, 'quality_inspection_template')}")
 
+    # 4 -> 5.1: the PO the GRN is made from (under the threshold: no quotations needed)
+    po = _raise_po(INDENTER, "DEMO-GRN", [(rfc, 4, 100, job_cert), (con.name, 10, 100, job_stock)])
+    _approve_po(po)
+
     # 5.1 GRN (stores)
     def blocks():
-        _expect_block("GRN row to Stores (not Quality Hold)", lambda: _grn([(rfc, 1, job_cert, STORES_WH)]).insert())
-        _expect_block("GRN row without a job (RF part)", lambda: _grn([(rfc, 1, None, None)]).insert())
+        _expect_block("GRN without a purchase order", lambda: _grn([(rfc, 1, job_cert, None)]).insert())
 
-        def no_attachment():
-            return _grn([(rfc, 1, job_cert, None)]).insert().submit()
-        _expect_block("GRN submit without the invoice / DC scan", no_attachment)
+        def to_stores():
+            pr = _grn_from_po(po)
+            pr.items[0].warehouse = STORES_WH
+            return pr.insert()
+        _expect_block("GRN row to Stores (not Quality Hold)", to_stores)
+
+        def no_job():
+            pr = _grn_from_po(po)
+            pr.items[0].project = None
+            return pr.insert()
+        _expect_block("GRN row without the PO row's job (RF part)", no_job)
+        _expect_block("GRN submit without the invoice / DC scan", lambda: _grn_from_po(po).insert().submit())
 
         def no_invoice():
-            pr = _grn([(rfc, 1, job_cert, None)], satcom_vendor_invoice_no="").insert()
+            pr = _grn_from_po(po, satcom_vendor_invoice_no="").insert()
             _file("Purchase Receipt", pr.name, "DEMO-scan.txt", "DEMO scan")
             return pr.submit()
         _expect_block("GRN submit without the vendor invoice no", no_invoice)
@@ -265,7 +444,7 @@ def _demo_receipt_qc(made, codes):
     _as(STORES, blocks)
 
     def receive():
-        pr = _grn([(rfc, 4, job_cert, None), (con.name, 10, job_stock, None)]).insert()
+        pr = _grn_from_po(po).insert()
         _file("Purchase Receipt", pr.name, "DEMO-invoice-and-dc.txt", "DEMO invoice / DC scan")
         pr.submit()
         return pr.name
@@ -487,6 +666,7 @@ def create_demo():
     _as(INDENTER, lambda: _expect_block("indenter submits a draft directly (bypass)", direct_submit))
     _as(STORES, lambda: _expect_block("stores submits a draft directly (bypass)", direct_submit))
 
+    _demo_purchase_orders(made, codes, a)
     _demo_receipt_qc(made, codes)
     frappe.db.commit()
 
@@ -568,9 +748,9 @@ def _restore_counters(deleted):
 
 def cleanup():
     """Remove DEMO test records (writes): GRNs, returns, QC releases, dispositions and inspections of
-    DEMO items (cancelled, then their ledger rows purged), DEMO indents, items (with their serials and
-    batches), jobs, the DEMO customer and supplier, with notifications, files and Deleted Document
-    rows. Counters go back to their values before create_demo."""
+    DEMO items (cancelled, then their ledger rows purged), DEMO purchase orders and supplier quotations,
+    DEMO indents, items (with their serials and batches), jobs, the DEMO customer and suppliers, with
+    notifications, files and Deleted Document rows. Counters go back to their values before create_demo."""
     demo_items = sorted({i.name for i in frappe.get_all("Item", filters={"item_name": ["like", "DEMO%"]}, fields=["name"])}
                         | {i.name for i in frappe.get_all("Item", filters={"satcom_mpn": ["like", "DEMO%"]}, fields=["name"])})
     demo_jobs = frappe.get_all("Project", filters={"satcom_job_title": ["like", "DEMO%"]}, pluck="name")
@@ -612,6 +792,19 @@ def cleanup():
         frappe.db.delete("Repost Item Valuation", {"name": ["in", [r.name for r in new_reposts]]})
         print(f"purged {len(new_reposts)} Repost Item Valuation row(s) queued by the cancels")
 
+    # purchase orders (cancelled first when approved), then the supplier quotations they compare
+    for dt, child in (("Purchase Order", "Purchase Order Item"), ("Supplier Quotation", "Supplier Quotation Item")):
+        names = set(parents(child)) | set(frappe.get_all(dt, filters={"supplier": ["in", DEMO_SUPPLIERS]}, pluck="name"))
+        for d in frappe.get_all(dt, filters={"name": ["in", list(names) or [""]]}, fields=["name", "docstatus"],
+                                order_by="name desc"):
+            if d.docstatus == 1:
+                frappe.get_doc(dt, d.name).cancel()
+            for log_dt, field in (("Workflow Action", "reference_name"), ("Notification Log", "document_name")):
+                frappe.db.delete(log_dt, {field: d.name})
+            frappe.delete_doc(dt, d.name, force=1)
+            deleted.setdefault(dt, []).append(d.name)
+            print(f"deleted {dt} {d.name}")
+
     # indents
     names = set(frappe.get_all("Material Request", filters={"title": ["like", "DEMO%"]}, pluck="name"))
     if demo_jobs:
@@ -647,7 +840,7 @@ def cleanup():
         frappe.delete_doc("Project", j.name)
         deleted.setdefault("Project", []).append(j.name)
         print(f"deleted Project {j.name}")
-    for dt, name in (("Customer", DEMO_CUSTOMER), ("Supplier", DEMO_SUPPLIER)):
+    for dt, name in (("Customer", DEMO_CUSTOMER), *(("Supplier", s) for s in DEMO_SUPPLIERS)):
         if frappe.db.exists(dt, name):
             frappe.delete_doc(dt, name)
             deleted.setdefault(dt, []).append(name)
@@ -675,8 +868,6 @@ def _section_5_receipt_qc():
     _check("5.1 Serial No and Batch record the job received for",
            frappe.get_meta("Serial No").has_field("satcom_received_for_job")
            and frappe.get_meta("Batch").has_field("satcom_received_for_job"))
-    _check("5.1 GRN without a PO allowed until 4 is live (Purchase Order Required = No)",
-           frappe.db.get_single_value("Buying Settings", "po_required") == "No")
     for name, dt, event in (("Satcom GRN - rules", "Purchase Receipt", "Before Save"),
                             ("Satcom GRN - submit guard", "Purchase Receipt", "Before Submit"),
                             ("Satcom GRN - job on serials and batches", "Purchase Receipt", "After Submit"),
@@ -739,6 +930,131 @@ def _section_5_receipt_qc():
                and all(d.satcom_disposition_reason for d in disp), disp)
         from erpnext.satcom_p1_receipt_qc import PENDING_QC_SQL
         _check("5.2 Pending QC empty after the release", not frappe.db.sql(PENDING_QC_SQL))
+
+
+def _section_4_purchase_orders():
+    from erpnext import satcom_p1_purchase_orders as p4
+
+    # 4.1 Satcom Settings: OPEN items are settings with the spec's default; a changed value is not a failure
+    dt = frappe.db.get_value("DocType", p4.SETTINGS, ["issingle", "custom"], as_dict=True)
+    _check(f"4.1 single DocType {p4.SETTINGS}", dt and dt.issingle and dt.custom, dt)
+    if dt:
+        meta = frappe.get_meta(p4.SETTINGS)
+        stored = frappe.db.get_singles_dict(p4.SETTINGS)
+        for field, default in p4.SETTINGS_DEFAULTS.items():
+            df = meta.get_field(field)
+            _check(f"4.1 {p4.SETTINGS}.{field}: spec default {default!r}, now {stored.get(field)!r}",
+                   df and str(df.default or 0) == str(default) and field in stored, (df and df.default, stored.get(field)))
+        _check("4.1 threshold basis options", (meta.get_field("threshold_basis").options or "").split("\n")
+               == p4.THRESHOLD_BASES)
+    # 4.1 quotations on the PO, waiver
+    child = frappe.db.get_value("DocType", p4.PO_QUOTATION, ["istable", "custom"], as_dict=True)
+    _check(f"4.1 child table {p4.PO_QUOTATION}", child and child.istable and child.custom, child)
+    if child:
+        cm = frappe.get_meta(p4.PO_QUOTATION)
+        sq, sup = cm.get_field("supplier_quotation"), cm.get_field("supplier")
+        _check("4.1 quotation row links a Supplier Quotation; supplier filled automatically",
+               sq and sq.options == "Supplier Quotation" and sq.reqd and sup and sup.read_only
+               and sup.fetch_from == "supplier_quotation.supplier")
+    po = frappe.get_meta("Purchase Order")
+    q = po.get_field("satcom_quotations")
+    _check("4.1 Purchase Order table satcom_quotations", q and q.fieldtype == "Table" and q.options == p4.PO_QUOTATION)
+    _check("4.1 waiver fields (not copied to a new PO; reason required when waived)",
+           po.has_field("satcom_quote_waived") and po.has_field("satcom_waiver_reason")
+           and po.get_field("satcom_quote_waived").no_copy and po.get_field("satcom_waiver_reason").no_copy
+           and po.get_field("satcom_waiver_reason").mandatory_depends_on)
+    # 4.2 approval
+    _check("4.2 Purchase Order field satcom_rejection_reason", po.has_field("satcom_rejection_reason"))
+    for name, event in (("Satcom PO - rules", "Before Save"), ("Satcom PO - approval guard", "Before Submit"),
+                        ("Satcom PO - quotation rule", "Before Submit")):
+        sc = frappe.db.get_value("Server Script", name, ["disabled", "doctype_event", "reference_doctype"], as_dict=True)
+        _check(f"4 server script {name}", sc and not sc.disabled and sc.doctype_event == event
+               and sc.reference_doctype == "Purchase Order", sc)
+    _check("4 client script Satcom PO (reject reason dialog)", frappe.db.get_value("Client Script", "Satcom PO", "enabled"))
+    wf = frappe.get_doc("Workflow", p4.PO_WORKFLOW) if frappe.db.exists("Workflow", p4.PO_WORKFLOW) else None
+    _check(f"4.2 workflow {p4.PO_WORKFLOW} active on Purchase Order, no email",
+           wf and wf.is_active and wf.document_type == "Purchase Order" and not wf.send_email_alert)
+    if wf:
+        _check("4.2 workflow states", [(s.state, s.doc_status, s.allow_edit) for s in wf.states]
+               == [(s, d, r) for s, (d, r, _) in p4.PO_STATES.items()])
+        _check("4.2 workflow transitions (Approve: no self approval)",
+               [(t.state, t.action, t.next_state, t.allowed, t.allow_self_approval) for t in wf.transitions]
+               == [tuple(t) for t in p4.PO_TRANSITIONS])
+    for user, can in ((INDENTER, True), (ALL_ROLES, True), (STORES, False)):
+        has = bool(frappe.has_permission("Purchase Order", "create", user=user))
+        _check(f"4.2 {user} {'can' if can else 'cannot'} raise purchase orders", has == can, has)
+    # 4.2 letterhead, company details, addresses, print format
+    lh = frappe.db.get_value("Letter Head", p4.LETTERHEAD, ["is_default", "disabled", "content"], as_dict=True)
+    _check(f"4.2 letterhead {p4.LETTERHEAD} is the default", lh and lh.is_default and not lh.disabled)
+    _check("4.2 it is the only default letterhead", frappe.db.count("Letter Head", {"is_default": 1}) == 1)
+    if lh:
+        text = lh.content or ""
+        missing = [x for x in (p4.REGISTERED_OFFICE, p4.FACTORY, p4.CIN, p4.GSTIN, p4.PHONE, p4.FAX, p4.EMAIL,
+                               p4.WEBSITE, "<img") if x not in text]
+        _check("4.2 letterhead shows the logo, registered office, factory, CIN and GSTIN", not missing, missing)
+    co = frappe.db.get_value("Company", COMPANY, ["tax_id", "default_letter_head"], as_dict=True)
+    cin = frappe.db.get_value("Company", COMPANY, "satcom_cin") if frappe.get_meta("Company").has_field("satcom_cin") else None
+    _check("4.2 Company GSTIN (Tax ID), CIN and default letterhead",
+           co.tax_id == p4.GSTIN and cin == p4.CIN and co.default_letter_head == p4.LETTERHEAD, (co, cin))
+    for title, values in p4.ADDRESSES.items():
+        a = frappe.db.get_value("Address", {"address_title": title, "address_type": values["address_type"]},
+                                ["name", "address_line1", "city", "pincode", "is_primary_address",
+                                 "is_shipping_address", "disabled"], as_dict=True)
+        linked = a and frappe.db.exists("Dynamic Link", {"parenttype": "Address", "parent": a.name,
+                                                         "link_doctype": "Company", "link_name": COMPANY})
+        _check(f"4.2 address {title} ({values['address_type']}) linked to the company",
+               a and linked and not a.disabled and a.address_line1 == values["address_line1"]
+               and a.pincode == values["pincode"] and a.is_primary_address == values["is_primary_address"]
+               and a.is_shipping_address == values["is_shipping_address"], a)
+    pf = frappe.db.get_value("Print Format", p4.PO_FORMAT, ["doc_type", "custom_format", "print_format_type",
+                                                             "disabled", "html"], as_dict=True)
+    _check(f"4.2 print format {p4.PO_FORMAT} on Purchase Order (job on each row, delivery address)",
+           pf and pf.doc_type == "Purchase Order" and pf.custom_format and pf.print_format_type == "Jinja"
+           and not pf.disabled and "row.project" in (pf.html or "") and "shipping_address_display" in (pf.html or ""))
+    _check(f"4.2 {p4.PO_FORMAT} is the Purchase Order's default print format",
+           po.default_print_format == p4.PO_FORMAT, po.default_print_format)
+    # 5.1 once section 4 is live
+    _check("4 / 5.1 a GRN needs a purchase order (Purchase Order Required = Yes)",
+           frappe.db.get_single_value("Buying Settings", "po_required") == "Yes")
+
+    demo = {d.get(PO_LABEL): d for d in frappe.get_all(
+        "Purchase Order", filters={PO_LABEL: ["like", "DEMO-%"]},
+        fields=["name", PO_LABEL, "workflow_state", "docstatus", "base_net_total", "satcom_quote_waived",
+                "satcom_waiver_reason", "satcom_rejection_reason", "shipping_address", "owner"])}
+    if demo:
+        def state(label, workflow_state, docstatus):
+            d = demo.get(label)
+            return d and d.workflow_state == workflow_state and d.docstatus == docstatus
+
+        def projects(label):
+            return frappe.get_all("Purchase Order Item", filters={"parent": demo[label].name}, pluck="project")
+
+        a = demo.get("DEMO-4L-2Q")
+        _check("4.1 demo Rs 4,00,000 PO with 2 quotations: not approved, rejected with a reason",
+               state("DEMO-4L-2Q", "Rejected", 0) and a.base_net_total == 400000 and a.satcom_rejection_reason, a)
+        _check("4.1 demo Rs 4,00,000 PO with 2 suppliers quoting (one twice, one draft) stays pending",
+               state("DEMO-4L-SAME", "Pending Approval", 0), demo.get("DEMO-4L-SAME"))
+        _check("4.1 demo Rs 4,00,000 PO with 3 suppliers quoting is approved",
+               state("DEMO-4L-3Q", "Approved", 1), demo.get("DEMO-4L-3Q"))
+        d = demo.get("DEMO-4L-WAIVED")
+        _check("4.1 demo Rs 4,00,000 PO with 1 quotation, waived by an approver with a reason, is approved",
+               state("DEMO-4L-WAIVED", "Approved", 1) and d.satcom_quote_waived and d.satcom_waiver_reason, d)
+        _check("4.1 / 4.2 demo Rs 50,000 tools PO: no quotations, no job, approved",
+               state("DEMO-50K-TOOLS", "Approved", 1) and not any(projects("DEMO-50K-TOOLS")), demo.get("DEMO-50K-TOOLS"))
+        _check("4.2 demo self-approval stays pending", state("DEMO-SELF", "Pending Approval", 0), demo.get("DEMO-SELF"))
+        g = demo.get("DEMO-FROM-INDENT")
+        job = frappe.db.get_value("Project", {"satcom_job_title": DEMO_JOBS[0][0]}, "name")
+        _check("4.2 demo PO made from the approved indent carries the indent's job on its rows",
+               state("DEMO-FROM-INDENT", "Approved", 1) and set(projects("DEMO-FROM-INDENT")) == {job}, g)
+        factory = frappe.db.get_value("Address", {"address_title": p4.FACTORY_TITLE, "address_type": "Shipping"}, "name")
+        _check("4.2 demo POs deliver to the factory",
+               factory and {x.shipping_address for x in demo.values()} == {factory},
+               sorted({str(x.shipping_address) for x in demo.values()}))
+        r = demo.get("DEMO-GRN")
+        grn_pos = set(frappe.get_all("Purchase Receipt Item", filters={"parenttype": "Purchase Receipt", "docstatus": 1,
+                                                                     "purchase_order": r.name if r else ""},
+                                     pluck="parent"))
+        _check("4 / 5.1 demo GRN was made from an approved PO", state("DEMO-GRN", "Approved", 1) and grn_pos, r)
 
 
 def _section_3_indents():
@@ -810,6 +1126,7 @@ def verify():
     _section_2_4_items()
     _section_2_5_jobs()
     _section_3_indents()
+    _section_4_purchase_orders()
     _section_5_receipt_qc()
     failed = _results.count(False)
     print(f"{len(_results) - failed}/{len(_results)} PASS" + (f", {failed} FAIL" if failed else ""))
