@@ -1,8 +1,9 @@
-"""Phase 1 purchase for satcom-erp (SPEC_PHASE1.md sections 3-4). Idempotent.
+"""Phase 1 indents for satcom-erp (SPEC_PHASE1.md section 3). Idempotent.
 
 Run after satcom_p1_foundation.run (copy server_scripts to /tmp/satcom_scripts first):
     bench --site frontend execute erpnext.satcom_p1_purchase.run
-Prints only what it changed; a second run reports "0 changes". Built so far: 3 indents.
+Prints only what it changed; a second run reports "0 changes".
+Section 4 (quotations and purchase orders) is in satcom_p1_purchase_orders.py.
 """
 import frappe
 

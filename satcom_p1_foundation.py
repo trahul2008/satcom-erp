@@ -48,9 +48,11 @@ def settings():
     valuation = frappe.db.get_single_value("Stock Settings", "valuation_method")
     if valuation != "FIFO":
         frappe.throw(f"Stock Settings valuation method is {valuation}, spec keeps FIFO (open item)")
+    # "Purchase Order Required" is not set here: it is No on a fresh site, and
+    # satcom_p1_purchase_orders.go_live switches it to Yes when section 4 goes live (spec 5.1),
+    # so rerunning this module can't undo that.
     _set_values("Buying Settings", None, {
         "supp_master_name": "Supplier Name",
-        "po_required": "No",
         "pr_required": "No",
         "maintain_same_rate": 0,  # POs must allow the approved quotation's rate
     })
